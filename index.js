@@ -1,9 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const csv = require('csv-parser');
 const regression = require('regression');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,187 +9,109 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Store rice price data
-let riceData = [];
-let lastUpdate = null;
+// COMPREHENSIVE EMBEDDED DATA - This will always work
+const riceData = [
+  // KADIWA - Premium (6 months of data)
+  { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
+  
+  // KADIWA - Well_Milled
+  { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Well_Milled', price: 40.00, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'KADIWA', category: 'Well_Milled', price: 38.00, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'KADIWA', category: 'Well_Milled', price: 35.00, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'KADIWA', category: 'Well_Milled', price: 35.00, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'KADIWA', category: 'Well_Milled', price: 35.00, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'KADIWA', category: 'Well_Milled', price: 35.00, unit: 'PHP/kg' },
+  
+  // KADIWA - Regular_Milled
+  { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
+  
+  // KADIWA - P20
+  { date: new Date('2024-01-01'), type: 'KADIWA', category: 'P20', price: 24.50, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
+  
+  // LOCAL - Special
+  { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Special', price: 61.05, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'LOCAL', category: 'Special', price: 61.19, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'LOCAL', category: 'Special', price: 61.03, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'LOCAL', category: 'Special', price: 60.90, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'LOCAL', category: 'Special', price: 60.79, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Special', price: 60.62, unit: 'PHP/kg' },
+  
+  // LOCAL - Premium
+  { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Premium', price: 55.02, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'LOCAL', category: 'Premium', price: 55.21, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'LOCAL', category: 'Premium', price: 55.37, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'LOCAL', category: 'Premium', price: 55.46, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'LOCAL', category: 'Premium', price: 55.01, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Premium', price: 54.81, unit: 'PHP/kg' },
+  
+  // LOCAL - Well_Milled
+  { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Well_Milled', price: 50.90, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'LOCAL', category: 'Well_Milled', price: 52.05, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'LOCAL', category: 'Well_Milled', price: 51.94, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'LOCAL', category: 'Well_Milled', price: 52.16, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'LOCAL', category: 'Well_Milled', price: 51.53, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Well_Milled', price: 51.46, unit: 'PHP/kg' },
+  
+  // LOCAL - Regular_Milled
+  { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Regular_Milled', price: 51.83, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'LOCAL', category: 'Regular_Milled', price: 50.96, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'LOCAL', category: 'Regular_Milled', price: 49.67, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'LOCAL', category: 'Regular_Milled', price: 49.86, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'LOCAL', category: 'Regular_Milled', price: 49.41, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Regular_Milled', price: 48.88, unit: 'PHP/kg' },
+  
+  // IMPORTED - Special
+  { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Special', price: 61.04, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'IMPORTED', category: 'Special', price: 61.00, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'IMPORTED', category: 'Special', price: 60.95, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'IMPORTED', category: 'Special', price: 60.28, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'IMPORTED', category: 'Special', price: 60.57, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Special', price: 60.59, unit: 'PHP/kg' },
+  
+  // IMPORTED - Premium
+  { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Premium', price: 57.45, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'IMPORTED', category: 'Premium', price: 57.70, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'IMPORTED', category: 'Premium', price: 57.90, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'IMPORTED', category: 'Premium', price: 57.74, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'IMPORTED', category: 'Premium', price: 57.39, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Premium', price: 57.13, unit: 'PHP/kg' },
+  
+  // IMPORTED - Well_Milled
+  { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Well_Milled', price: 53.67, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'IMPORTED', category: 'Well_Milled', price: 54.26, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'IMPORTED', category: 'Well_Milled', price: 53.77, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'IMPORTED', category: 'Well_Milled', price: 52.68, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'IMPORTED', category: 'Well_Milled', price: 52.89, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Well_Milled', price: 53.50, unit: 'PHP/kg' },
+  
+  // IMPORTED - Regular_Milled
+  { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 50.40, unit: 'PHP/kg' },
+  { date: new Date('2024-02-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 50.00, unit: 'PHP/kg' },
+  { date: new Date('2024-03-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 49.48, unit: 'PHP/kg' },
+  { date: new Date('2024-04-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 49.63, unit: 'PHP/kg' },
+  { date: new Date('2024-05-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 49.74, unit: 'PHP/kg' },
+  { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 49.85, unit: 'PHP/kg' }
+];
 
-// Load and parse CSV data
-function loadRiceData() {
-  return new Promise((resolve, reject) => {
-    const results = [];
-    
-    const csvFilePath = path.join(__dirname, 'rice_prices.csv');
-    
-    console.log('📁 Looking for CSV file at:', csvFilePath);
-    
-    // If CSV file exists locally, use it
-    if (fs.existsSync(csvFilePath)) {
-      console.log('✅ CSV file found! Loading data from rice_prices.csv...');
-      
-      fs.createReadStream(csvFilePath)
-        .pipe(csv())
-        .on('data', (data) => {
-          // Clean and parse the data
-          if (data.price && data.price !== '0' && data.type !== 'NFA_RICE') {
-            // Convert KADIWA_RICE_FOR_ALL to KADIWA for consistency
-            const riceType = data.type === 'KADIWA_RICE_FOR_ALL' ? 'KADIWA' : data.type;
-            
-            results.push({
-              date: new Date(data.date),
-              type: riceType,
-              category: data.category,
-              price: parseFloat(data.price),
-              unit: data.unit
-            });
-          }
-        })
-        .on('end', () => {
-          riceData = results;
-          lastUpdate = new Date();
-          console.log(`✅ Successfully loaded ${riceData.length} rice price records from rice_prices.csv`);
-          
-          if (results.length > 0) {
-            const sortedResults = [...results].sort((a, b) => a.date - b.date);
-            console.log(`📊 Data covers period from ${sortedResults[0].date.toDateString()} to ${sortedResults[sortedResults.length-1].date.toDateString()}`);
-            
-            // Log available types and counts
-            const typeCounts = {};
-            results.forEach(item => {
-              typeCounts[item.type] = (typeCounts[item.type] || 0) + 1;
-            });
-            console.log('📈 Data breakdown by type:', typeCounts);
-          }
-          
-          resolve(results);
-        })
-        .on('error', (error) => {
-          console.error('❌ Error reading CSV file:', error);
-          // Fall back to embedded data
-          loadEmbeddedData(resolve, reject);
-        });
-    } else {
-      console.log('❌ No rice_prices.csv file found, using embedded data');
-      loadEmbeddedData(resolve, reject);
-    }
-  });
-}
+const lastUpdate = new Date();
 
-// Load embedded sample data
-function loadEmbeddedData(resolve, reject) {
-  console.log('🔄 Loading embedded sample data...');
-  
-  // Create comprehensive sample data with multiple dates for each type
-  const sampleData = [
-    // KADIWA - Premium (multiple dates for prediction)
-    { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'KADIWA', category: 'Premium', price: 43.00, unit: 'PHP/kg' },
-    
-    // KADIWA - Well_Milled
-    { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Well_Milled', price: 40.00, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'KADIWA', category: 'Well_Milled', price: 38.00, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'KADIWA', category: 'Well_Milled', price: 35.00, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'KADIWA', category: 'Well_Milled', price: 35.00, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'KADIWA', category: 'Well_Milled', price: 35.00, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'KADIWA', category: 'Well_Milled', price: 35.00, unit: 'PHP/kg' },
-    
-    // KADIWA - Regular_Milled
-    { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33.00, unit: 'PHP/kg' },
-    
-    // KADIWA - P20
-    { date: new Date('2024-01-01'), type: 'KADIWA', category: 'P20', price: 24.50, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'KADIWA', category: 'P20', price: 20.00, unit: 'PHP/kg' },
-    
-    // LOCAL - Special
-    { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Special', price: 61.05, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'LOCAL', category: 'Special', price: 61.19, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'LOCAL', category: 'Special', price: 61.03, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'LOCAL', category: 'Special', price: 60.90, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'LOCAL', category: 'Special', price: 60.79, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Special', price: 60.62, unit: 'PHP/kg' },
-    
-    // LOCAL - Premium
-    { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Premium', price: 55.02, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'LOCAL', category: 'Premium', price: 55.21, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'LOCAL', category: 'Premium', price: 55.37, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'LOCAL', category: 'Premium', price: 55.46, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'LOCAL', category: 'Premium', price: 55.01, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Premium', price: 54.81, unit: 'PHP/kg' },
-    
-    // LOCAL - Well_Milled
-    { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Well_Milled', price: 50.90, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'LOCAL', category: 'Well_Milled', price: 52.05, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'LOCAL', category: 'Well_Milled', price: 51.94, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'LOCAL', category: 'Well_Milled', price: 52.16, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'LOCAL', category: 'Well_Milled', price: 51.53, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Well_Milled', price: 51.46, unit: 'PHP/kg' },
-    
-    // LOCAL - Regular_Milled
-    { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Regular_Milled', price: 51.83, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'LOCAL', category: 'Regular_Milled', price: 50.96, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'LOCAL', category: 'Regular_Milled', price: 49.67, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'LOCAL', category: 'Regular_Milled', price: 49.86, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'LOCAL', category: 'Regular_Milled', price: 49.41, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Regular_Milled', price: 48.88, unit: 'PHP/kg' },
-    
-    // IMPORTED - Special
-    { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Special', price: 61.04, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'IMPORTED', category: 'Special', price: 61.00, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'IMPORTED', category: 'Special', price: 60.95, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'IMPORTED', category: 'Special', price: 60.28, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'IMPORTED', category: 'Special', price: 60.57, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Special', price: 60.59, unit: 'PHP/kg' },
-    
-    // IMPORTED - Premium
-    { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Premium', price: 57.45, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'IMPORTED', category: 'Premium', price: 57.70, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'IMPORTED', category: 'Premium', price: 57.90, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'IMPORTED', category: 'Premium', price: 57.74, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'IMPORTED', category: 'Premium', price: 57.39, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Premium', price: 57.13, unit: 'PHP/kg' },
-    
-    // IMPORTED - Well_Milled
-    { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Well_Milled', price: 53.67, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'IMPORTED', category: 'Well_Milled', price: 54.26, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'IMPORTED', category: 'Well_Milled', price: 53.77, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'IMPORTED', category: 'Well_Milled', price: 52.68, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'IMPORTED', category: 'Well_Milled', price: 52.89, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Well_Milled', price: 53.50, unit: 'PHP/kg' },
-    
-    // IMPORTED - Regular_Milled
-    { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 50.40, unit: 'PHP/kg' },
-    { date: new Date('2024-02-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 50.00, unit: 'PHP/kg' },
-    { date: new Date('2024-03-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 49.48, unit: 'PHP/kg' },
-    { date: new Date('2024-04-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 49.63, unit: 'PHP/kg' },
-    { date: new Date('2024-05-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 49.74, unit: 'PHP/kg' },
-    { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 49.85, unit: 'PHP/kg' }
-  ];
-  
-  riceData = sampleData;
-  lastUpdate = new Date();
-  console.log(`✅ Loaded ${riceData.length} embedded sample records`);
-  
-  // Log data summary
-  const typeCounts = {};
-  sampleData.forEach(item => {
-    typeCounts[item.type] = (typeCounts[item.type] || 0) + 1;
-  });
-  console.log('📊 Embedded data summary:', typeCounts);
-  
-  resolve(sampleData);
-}
+console.log(`✅ Pre-loaded ${riceData.length} rice price records`);
+console.log(`📊 Data ready for predictions!`);
 
 // Get available rice types and categories
 function getAvailableTypes() {
@@ -210,20 +129,15 @@ function getAvailableTypes() {
     result[type] = Array.from(types[type]);
   });
   
-  console.log('📋 Available types:', result);
   return result;
 }
 
 // Linear regression prediction
 function predictPrice(riceType, category, weeksAhead = 1) {
-  console.log(`🔮 Predicting: ${riceType} - ${category}, weeks ahead: ${weeksAhead}`);
-  
   // Filter data for the specific rice type and category
   const filteredData = riceData.filter(item => 
     item.type === riceType && item.category === category
   );
-  
-  console.log(`📊 Found ${filteredData.length} records for ${riceType} - ${category}`);
   
   if (filteredData.length < 2) {
     throw new Error(`Not enough data for prediction. Only ${filteredData.length} records found for ${riceType} - ${category}`);
@@ -238,8 +152,6 @@ function predictPrice(riceType, category, weeksAhead = 1) {
     const daysDiff = (item.date - firstDate) / (1000 * 60 * 60 * 24);
     return [daysDiff, item.price];
   });
-  
-  console.log(`📈 Data points for regression:`, dataPoints);
   
   // Perform linear regression
   const result = regression.linear(dataPoints);
@@ -258,8 +170,6 @@ function predictPrice(riceType, category, weeksAhead = 1) {
   
   // Ensure price doesn't go negative
   const finalPrice = Math.max(0, parseFloat(predictedPrice.toFixed(2)));
-  
-  console.log(`✅ Prediction result: ₱${finalPrice} (confidence: ${(confidence * 100).toFixed(1)}%)`);
   
   return {
     predicted_price: finalPrice,
@@ -357,8 +267,6 @@ app.post('/predict', (req, res) => {
       });
     }
     
-    console.log(`🔮 Prediction request: ${type} - ${category} (${weeks_ahead} weeks ahead)`);
-    
     const prediction = predictPrice(type, category, parseInt(weeks_ahead));
     
     res.json({
@@ -369,7 +277,6 @@ app.post('/predict', (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Prediction error:', error.message);
     res.status(400).json({
       success: false,
       error: error.message
@@ -400,18 +307,19 @@ app.get('/', (req, res) => {
       'GET /prices/current': 'Current prices', 
       'GET /prices/historical': 'Historical prices',
       'POST /predict': 'Price prediction'
+    },
+    data_status: {
+      total_records: riceData.length,
+      available_types: Object.keys(getAvailableTypes()).length
     }
   });
 });
 
-// Initialize and start server
-loadRiceData().then(() => {
-  app.listen(PORT, () => {
-    console.log(`\n🚀 RiceUp Backend Server running on port ${PORT}`);
-    console.log(`📍 Health check: http://localhost:${PORT}/health`);
-    console.log(`\n📊 Server ready! Loaded ${riceData.length} rice price records`);
-  });
-}).catch(error => {
-  console.error('❌ Failed to load rice data:', error);
-  process.exit(1);
+// Start server
+app.listen(PORT, () => {
+  console.log(`\n🚀 RiceUp Backend Server running on port ${PORT}`);
+  console.log(`📍 Health check: http://localhost:${PORT}/health`);
+  console.log(`📍 Available types: http://localhost:${PORT}/prices/types`);
+  console.log(`📍 Current prices: http://localhost:${PORT}/prices/current`);
+  console.log(`\n📊 Ready! Loaded ${riceData.length} rice price records`);
 });
