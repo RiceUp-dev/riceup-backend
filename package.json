@@ -5,16 +5,24 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "csv-parser": "^3.0.0",
-    "regression": "^2.0.1",
-    "node-cron": "^3.0.2"
+    "regression": "^2.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
-  }
+  },
+  "keywords": [
+    "rice",
+    "prices",
+    "prediction",
+    "philippines"
+  ],
+  "author": "RiceUp Team",
+  "license": "MIT"
 }
