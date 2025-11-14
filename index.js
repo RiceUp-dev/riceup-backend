@@ -23,76 +23,150 @@ function loadRiceData() {
     
     const csvFilePath = path.join(__dirname, 'rice_prices.csv');
     
-    // If CSV file exists locally, use it
-    if (fs.existsSync(csvFilePath)) {
-      console.log('📁 Loading data from rice_prices.csv file...');
-      fs.createReadStream(csvFilePath)
-        .pipe(csv())
-        .on('data', (data) => {
-          // Clean and parse the data - handle both NFA_RICE and KADIWA_RICE_FOR_ALL
-          if (data.price && data.price !== '0' && data.type !== 'NFA_RICE') {
-            // Convert KADIWA_RICE_FOR_ALL to KADIWA for consistency
-            const riceType = data.type === 'KADIWA_RICE_FOR_ALL' ? 'KADIWA' : data.type;
-            
-            results.push({
-              date: new Date(data.date),
-              type: riceType,
-              category: data.category,
-              price: parseFloat(data.price),
-              unit: data.unit
-            });
-          }
-        })
-        .on('end', () => {
-          riceData = results;
-          lastUpdate = new Date();
-          console.log(`✅ Successfully loaded ${riceData.length} rice price records from rice_prices.csv`);
-          
-          if (results.length > 0) {
-            const sortedResults = [...results].sort((a, b) => a.date - b.date);
-            console.log(`📊 Data covers period from ${sortedResults[0].date.toDateString()} to ${sortedResults[sortedResults.length-1].date.toDateString()}`);
-            
-            // Log available types and counts
-            const typeCounts = {};
-            results.forEach(item => {
-              typeCounts[item.type] = (typeCounts[item.type] || 0) + 1;
-            });
-            console.log('📈 Data breakdown by type:', typeCounts);
-          }
-          
-          resolve(results);
-        })
-        .on('error', (error) => {
-          console.error('❌ Error reading CSV file:', error);
-          reject(error);
-        });
-    } else {
-      console.log('⚠️  No rice_prices.csv file found, using embedded sample data');
-      // If no local CSV, use minimal sample data
-      const sampleData = [
-        { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Well_Milled', price: 40, unit: 'PHP/kg' },
-        { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Special', price: 61.05, unit: 'PHP/kg' },
-        { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Premium', price: 55.02, unit: 'PHP/kg' },
-        { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Special', price: 61.04, unit: 'PHP/kg' },
-        { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Premium', price: 57.45, unit: 'PHP/kg' },
-        { date: new Date('2024-06-01'), type: 'KADIWA', category: 'Well_Milled', price: 35, unit: 'PHP/kg' },
-        { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Special', price: 60.62, unit: 'PHP/kg' },
-        { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Premium', price: 54.81, unit: 'PHP/kg' },
-        { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Special', price: 60.59, unit: 'PHP/kg' },
-        { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Premium', price: 57.13, unit: 'PHP/kg' },
-      ];
-      
-      riceData = sampleData;
-      lastUpdate = new Date();
-      console.log(`📊 Loaded ${riceData.length} sample rice price records`);
-      resolve(sampleData);
+    console.log('📁 Looking for CSV file at:', csvFilePath);
+    
+    // Check if CSV file exists
+    if (!fs.existsSync(csvFilePath)) {
+      console.log('❌ CSV file not found! Available files:', fs.readdirSync(__dirname));
+      // Use embedded data as fallback
+      useEmbeddedData(resolve, reject);
+      return;
     }
+
+    console.log('✅ CSV file found! Starting to parse...');
+    
+    let rowCount = 0;
+    let validRowCount = 0;
+    let errorCount = 0;
+    
+    fs.createReadStream(csvFilePath)
+      .pipe(csv())
+      .on('data', (row) => {
+        rowCount++;
+        
+        try {
+          // Log first 3 rows for debugging
+          if (rowCount <= 3) {
+            console.log(`📄 Sample row ${rowCount}:`, row);
+          }
+          
+          // Skip NFA_RICE and rows with price 0 or empty
+          if (row.type === 'NFA_RICE' || !row.price || row.price === '0' || row.price === '') {
+            return;
+          }
+          
+          // Convert KADIWA_RICE_FOR_ALL to KADIWA for consistency
+          const riceType = row.type === 'KADIWA_RICE_FOR_ALL' ? 'KADIWA' : row.type;
+          
+          // Parse price - handle different formats
+          let priceValue;
+          if (typeof row.price === 'string') {
+            priceValue = parseFloat(row.price.trim());
+          } else {
+            priceValue = parseFloat(row.price);
+          }
+          
+          // Validate price
+          if (isNaN(priceValue) || priceValue <= 0) {
+            console.log(`⚠️  Invalid price in row ${rowCount}:`, row.price);
+            return;
+          }
+          
+          // Parse date
+          let dateValue;
+          try {
+            dateValue = new Date(row.date);
+            if (isNaN(dateValue.getTime())) {
+              console.log(`⚠️  Invalid date in row ${rowCount}:`, row.date);
+              return;
+            }
+          } catch (dateError) {
+            console.log(`⚠️  Date parse error in row ${rowCount}:`, row.date);
+            return;
+          }
+          
+          results.push({
+            date: dateValue,
+            type: riceType,
+            category: row.category,
+            price: priceValue,
+            unit: row.unit || 'PHP/kg'
+          });
+          validRowCount++;
+          
+        } catch (error) {
+          errorCount++;
+          console.log(`❌ Error processing row ${rowCount}:`, error.message);
+        }
+      })
+      .on('end', () => {
+        console.log(`\n📊 CSV Processing Complete:`);
+        console.log(`   Total rows processed: ${rowCount}`);
+        console.log(`   Valid records: ${validRowCount}`);
+        console.log(`   Errors: ${errorCount}`);
+        
+        riceData = results;
+        lastUpdate = new Date();
+        
+        if (results.length > 0) {
+          const sortedResults = [...results].sort((a, b) => a.date - b.date);
+          console.log(`📅 Data covers: ${sortedResults[0].date.toDateString()} to ${sortedResults[sortedResults.length-1].date.toDateString()}`);
+          
+          // Log type breakdown
+          const typeCounts = {};
+          results.forEach(item => {
+            typeCounts[item.type] = (typeCounts[item.type] || 0) + 1;
+          });
+          console.log('🏷️  Type breakdown:', typeCounts);
+        } else {
+          console.log('❌ No valid data loaded from CSV! Using embedded data...');
+          useEmbeddedData(resolve, reject);
+          return;
+        }
+        
+        resolve(results);
+      })
+      .on('error', (error) => {
+        console.error('❌ CSV read error:', error);
+        useEmbeddedData(resolve, reject);
+      });
   });
+}
+
+// Use embedded data as fallback
+function useEmbeddedData(resolve, reject) {
+  console.log('🔄 Using embedded sample data...');
+  
+  const sampleData = [
+    { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Well_Milled', price: 40, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Premium', price: 43, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'KADIWA', category: 'Regular_Milled', price: 33, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'KADIWA', category: 'P20', price: 20, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Special', price: 61.05, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Premium', price: 55.02, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Well_Milled', price: 50.90, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'LOCAL', category: 'Regular_Milled', price: 51.83, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Special', price: 61.04, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Premium', price: 57.45, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Well_Milled', price: 53.67, unit: 'PHP/kg' },
+    { date: new Date('2024-01-01'), type: 'IMPORTED', category: 'Regular_Milled', price: 50.40, unit: 'PHP/kg' },
+    { date: new Date('2024-06-01'), type: 'KADIWA', category: 'Well_Milled', price: 35, unit: 'PHP/kg' },
+    { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Special', price: 60.62, unit: 'PHP/kg' },
+    { date: new Date('2024-06-01'), type: 'LOCAL', category: 'Premium', price: 54.81, unit: 'PHP/kg' },
+    { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Special', price: 60.59, unit: 'PHP/kg' },
+    { date: new Date('2024-06-01'), type: 'IMPORTED', category: 'Premium', price: 57.13, unit: 'PHP/kg' },
+  ];
+  
+  riceData = sampleData;
+  lastUpdate = new Date();
+  console.log(`✅ Loaded ${sampleData.length} sample records`);
+  resolve(sampleData);
 }
 
 // Get available rice types and categories
 function getAvailableTypes() {
   const types = {};
+  
   riceData.forEach(item => {
     if (!types[item.type]) {
       types[item.type] = new Set();
@@ -110,7 +184,6 @@ function getAvailableTypes() {
 
 // Linear regression prediction
 function predictPrice(riceType, category, weeksAhead = 1) {
-  // Filter data for the specific rice type and category
   const filteredData = riceData.filter(item => 
     item.type === riceType && item.category === category
   );
@@ -133,8 +206,8 @@ function predictPrice(riceType, category, weeksAhead = 1) {
   const result = regression.linear(dataPoints);
   const [slope, intercept] = result.equation;
   
-  // Calculate confidence level (R² value)
-  const confidence = Math.max(0, Math.min(1, result.r2)); // Clamp between 0 and 1
+  // Calculate confidence level
+  const confidence = Math.max(0, Math.min(1, result.r2));
   
   // Predict future price
   const lastDate = filteredData[filteredData.length - 1].date;
@@ -152,8 +225,7 @@ function predictPrice(riceType, category, weeksAhead = 1) {
     prediction_date: predictionDate.toISOString().split('T')[0],
     confidence: confidence,
     data_points: filteredData.length,
-    trend: slope > 0 ? 'upward' : slope < 0 ? 'downward' : 'stable',
-    slope: parseFloat(slope.toFixed(6))
+    trend: slope > 0 ? 'upward' : slope < 0 ? 'downward' : 'stable'
   };
 }
 
@@ -169,13 +241,11 @@ app.get('/prices/types', (req, res) => {
   }
 });
 
-// Get current prices (latest prices for each type/category)
+// Get current prices
 app.get('/prices/current', (req, res) => {
   try {
-    const currentPrices = {};
     const latestDates = {};
     
-    // Find the latest date for each type/category combination
     riceData.forEach(item => {
       const key = `${item.type}-${item.category}`;
       if (!latestDates[key] || item.date > latestDates[key].date) {
@@ -202,7 +272,7 @@ app.get('/prices/current', (req, res) => {
   }
 });
 
-// Get historical prices with optional filtering
+// Get historical prices
 app.get('/prices/historical', (req, res) => {
   try {
     const { type, category } = req.query;
@@ -217,10 +287,7 @@ app.get('/prices/historical', (req, res) => {
       filteredData = filteredData.filter(item => item.category === category);
     }
     
-    // Sort by date (newest first)
     filteredData.sort((a, b) => b.date - a.date);
-    
-    // Limit to last 100 records for performance
     const limitedData = filteredData.slice(0, 100);
     
     res.json({
@@ -244,11 +311,7 @@ app.post('/predict', (req, res) => {
       });
     }
     
-    console.log(`🔮 Prediction request: ${type} - ${category} (${weeks_ahead} weeks ahead)`);
-    
     const prediction = predictPrice(type, category, parseInt(weeks_ahead));
-    
-    console.log(`✅ Prediction result: ₱${prediction.predicted_price} (confidence: ${(prediction.confidence * 100).toFixed(1)}%)`);
     
     res.json({
       success: true,
@@ -258,48 +321,10 @@ app.post('/predict', (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Prediction error:', error.message);
     res.status(400).json({
       success: false,
       error: error.message
     });
-  }
-});
-
-// Get prediction insights for a specific rice type
-app.get('/predict/insights/:type/:category', (req, res) => {
-  try {
-    const { type, category } = req.params;
-    
-    const filteredData = riceData.filter(item => 
-      item.type === type && item.category === category
-    );
-    
-    if (filteredData.length === 0) {
-      return res.status(404).json({ error: 'No data found for the specified type and category' });
-    }
-    
-    // Sort by date
-    filteredData.sort((a, b) => a.date - b.date);
-    
-    const insights = {
-      type,
-      category,
-      total_data_points: filteredData.length,
-      date_range: {
-        start: filteredData[0].date.toISOString().split('T')[0],
-        end: filteredData[filteredData.length - 1].date.toISOString().split('T')[0]
-      },
-      price_range: {
-        min: Math.min(...filteredData.map(d => d.price)),
-        max: Math.max(...filteredData.map(d => d.price)),
-        current: filteredData[filteredData.length - 1].price
-      }
-    };
-    
-    res.json(insights);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
@@ -309,25 +334,7 @@ app.get('/health', (req, res) => {
     status: 'OK',
     last_update: lastUpdate,
     total_records: riceData.length,
-    available_types: Object.keys(getAvailableTypes()).length,
-    memory_usage: process.memoryUsage(),
-    uptime: process.uptime()
-  });
-});
-
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    message: 'RiceUp Backend API',
-    version: '1.0.0',
-    endpoints: {
-      'GET /health': 'Health check',
-      'GET /prices/types': 'Available rice types',
-      'GET /prices/current': 'Current prices', 
-      'GET /prices/historical': 'Historical prices',
-      'POST /predict': 'Price prediction',
-      'GET /predict/insights/:type/:category': 'Prediction insights'
-    }
+    available_types: Object.keys(getAvailableTypes()).length
   });
 });
 
@@ -335,13 +342,10 @@ app.get('/', (req, res) => {
 loadRiceData().then(() => {
   app.listen(PORT, () => {
     console.log(`\n🚀 RiceUp Backend Server running on port ${PORT}`);
-    console.log(`📍 Available endpoints:`);
-    console.log(`   GET  /health - Health check`);
-    console.log(`   GET  /prices/types - Available rice types`);
-    console.log(`   GET  /prices/current - Current prices`);
-    console.log(`   GET  /prices/historical - Historical prices`);
-    console.log(`   POST /predict - Price prediction`);
-    console.log(`\n📊 Server ready to serve rice price predictions!`);
+    console.log(`📍 Health check: http://localhost:${PORT}/health`);
+    console.log(`📍 Available types: http://localhost:${PORT}/prices/types`);
+    console.log(`📍 Current prices: http://localhost:${PORT}/prices/current`);
+    console.log(`\n📊 Ready to serve rice price predictions!`);
   });
 }).catch(error => {
   console.error('❌ Failed to load rice data:', error);
