@@ -1,5 +1,5 @@
 <<<<<<< HEAD
-date,type,category,price,unit
+date,type,category,price ,unit
 2023-08-21,NFA_RICE,Well_Milled,0,PHP/kg
 2023-08-21,IMPORTED,Special,56.5,PHP/kg
 2023-08-21,IMPORTED,Premium,51.85,PHP/kg
@@ -2185,5 +2185,6 @@ date,type,category,price ,unit
 2025-10-27,LOCAL,Premium,48.64,PHP/kg
 2025-10-27,LOCAL,Well_Milled,42.26,PHP/kg
 2025-10-27,LOCAL,Regular_Milled,37.1,PHP/kg
+
 
 
