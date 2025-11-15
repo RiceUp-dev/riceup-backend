@@ -551,5 +551,41 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+// Add this debug endpoint to see all your data
+app.get('/api/debug/all-data', (req, res) => {
+  try {
+    // Group data by year to see what you actually have
+    const dataByYear = {};
+    riceData.forEach(item => {
+      const year = new Date(item.date).getFullYear();
+      if (!dataByYear[year]) {
+        dataByYear[year] = [];
+      }
+      dataByYear[year].push(item);
+    });
+    
+    // Count records per year
+    const yearCounts = {};
+    Object.keys(dataByYear).forEach(year => {
+      yearCounts[year] = dataByYear[year].length;
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        total_records: riceData.length,
+        records_by_year: yearCounts,
+        sample_records: riceData.slice(0, 10), // First 10 records
+        available_years: Object.keys(dataByYear).sort((a, b) => b - a)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Start the server
 startServer();
