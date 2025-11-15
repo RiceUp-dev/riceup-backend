@@ -25,13 +25,15 @@ function loadRiceData() {
     fs.createReadStream('rice_prices.csv')
       .pipe(csv())
       .on('data', (data) => {
-        // Clean up the price field (remove spaces)
+        // Clean up the price field (remove spaces and handle empty prices)
         const cleanPrice = data.price?.trim() || data['price ']?.trim() || '0';
+        const priceValue = parseFloat(cleanPrice);
+        
         results.push({
           date: new Date(data.date),
           type: data.type,
           category: data.category,
-          price: parseFloat(cleanPrice) || 0,
+          price: isNaN(priceValue) ? 0 : priceValue,
           unit: data.unit
         });
       })
@@ -78,8 +80,21 @@ function getAvailableTypes() {
 
 // Get current prices (latest date for each type/category)
 function getCurrentPrices() {
+  if (riceData.length === 0) {
+    return { current_prices: [], as_of_date: new Date() };
+  }
+  
+  // Find the latest date in the data
   const latestDate = new Date(Math.max(...riceData.map(item => item.date.getTime())));
-  const currentData = riceData.filter(item => item.date.getTime() === latestDate.getTime());
+  console.log('📅 Latest date in data:', latestDate);
+  
+  // Get all entries for the latest date
+  const currentData = riceData.filter(item => {
+    const itemDate = new Date(item.date);
+    return itemDate.getTime() === latestDate.getTime() && item.price > 0;
+  });
+  
+  console.log(`📊 Found ${currentData.length} current price entries`);
   
   return {
     current_prices: currentData,
@@ -100,6 +115,12 @@ function getHistoricalData(filters = {}) {
   if (filters.category && filters.category !== 'all') {
     filteredData = filteredData.filter(item => item.category === filters.category);
   }
+  
+  // Filter out zero prices
+  filteredData = filteredData.filter(item => item.price > 0);
+  
+  // Sort by date (newest first)
+  filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
   
   // Limit results if specified
   if (filters.limit) {
@@ -173,12 +194,15 @@ app.get('/', (req, res) => {
 app.get('/api/prices/types', (req, res) => {
   try {
     const types = getAvailableTypes();
+    console.log('📋 Available types:', types);
+    
     res.json({
       success: true,
       data: types,
       total_types: Object.keys(types).length
     });
   } catch (error) {
+    console.error('Error in /api/prices/types:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch rice types'
@@ -190,11 +214,14 @@ app.get('/api/prices/types', (req, res) => {
 app.get('/api/prices/current', (req, res) => {
   try {
     const currentPrices = getCurrentPrices();
+    console.log('💰 Current prices count:', currentPrices.current_prices.length);
+    
     res.json({
       success: true,
       data: currentPrices
     });
   } catch (error) {
+    console.error('Error in /api/prices/current:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch current prices'
@@ -206,7 +233,11 @@ app.get('/api/prices/current', (req, res) => {
 app.get('/api/prices/historical', (req, res) => {
   try {
     const { type, category, limit } = req.query;
+    console.log('📊 History request:', { type, category, limit });
+    
     const historicalData = getHistoricalData({ type, category, limit });
+    
+    console.log(`📊 Returning ${historicalData.length} historical records`);
     
     res.json({
       success: true,
@@ -217,6 +248,7 @@ app.get('/api/prices/historical', (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error in /api/prices/historical:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch historical prices'
@@ -228,7 +260,8 @@ app.get('/api/prices/historical', (req, res) => {
 app.get('/api/prices/stats', (req, res) => {
   try {
     const currentPrices = getCurrentPrices();
-    const averagePrice = currentPrices.current_prices.reduce((sum, item) => sum + item.price, 0) / currentPrices.current_prices.length;
+    const prices = currentPrices.current_prices.map(item => item.price).filter(price => price > 0);
+    const averagePrice = prices.length > 0 ? prices.reduce((sum, price) => sum + price, 0) / prices.length : 0;
     
     res.json({
       success: true,
@@ -239,6 +272,7 @@ app.get('/api/prices/stats', (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error in /api/prices/stats:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch price statistics'
@@ -250,6 +284,8 @@ app.get('/api/prices/stats', (req, res) => {
 app.post('/api/predict', (req, res) => {
   try {
     const { type, category, weeks_ahead = 1 } = req.body;
+    
+    console.log('🔮 Prediction request:', { type, category, weeks_ahead });
     
     if (!type || !category) {
       return res.status(400).json({
@@ -272,6 +308,7 @@ app.post('/api/predict', (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error in /api/predict:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Prediction failed'
@@ -281,12 +318,15 @@ app.post('/api/predict', (req, res) => {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
+  const currentPrices = getCurrentPrices();
+  
   res.json({
     success: true,
     data: {
       status: 'OK',
       last_update: lastUpdate,
       total_records: riceData.length,
+      current_records: currentPrices.current_prices.length,
       available_types: Object.keys(getAvailableTypes()).length,
       memory_usage: process.memoryUsage(),
       uptime: process.uptime()
