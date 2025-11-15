@@ -7,11 +7,13 @@ let availableRiceTypes = {};
 let currentPricesData = [];
 let currentFilter = 'all';
 
-// Price History with Pagination
+// Price History with Traditional Pagination
 let historyData = [];
 let currentHistoryPage = 1;
-const HISTORY_PAGE_SIZE = 10;
-let showAllData = false;
+const HISTORY_PAGE_SIZE = 20; // Increased page size for better user experience
+let totalHistoryPages = 1;
+let totalHistoryRecords = 0;
+let currentHistoryFilters = { type: 'all', category: 'all' };
 
 // Enhanced fetch with timeout and retry
 async function fetchWithTimeout(url, options = {}) {
@@ -454,7 +456,7 @@ function filterCurrentPrices() {
   }
 }
 
-// Price History Functions - FIXED VERSION
+// ENHANCED: Price History with Traditional Pagination
 async function showPriceHistory() {
   if (!backendOnline) {
     showError('historyContent', 'Hindi makakonekta sa server upang kunin ang kasaysayan ng presyo.');
@@ -462,44 +464,54 @@ async function showPriceHistory() {
   }
 
   const historyContent = getElementSafe('historyContent');
-  const historyLoading = getElementSafe('historyLoading');
+  const historyLoadingElement = getElementSafe('historyLoading');
 
-  if (!historyContent || !historyLoading) {
+  if (!historyContent || !historyLoadingElement) {
     console.error('Required elements for history not found');
     return;
   }
 
-  historyLoading.style.display = 'block';
+  historyLoadingElement.style.display = 'block';
   historyContent.innerHTML = '';
 
   try {
-    console.log('📊 Fetching history from:', `${API_URL}/api/prices/historical?limit=100`);
-    updateDebugInfo('Kumukuha ng kasaysayan ng presyo...');
+    console.log(`📊 Loading history page ${currentHistoryPage}...`);
     
-    // Request 100 records
-    const response = await fetchWithTimeout(`${API_URL}/api/prices/historical?limit=100`, {
+    const historyType = document.getElementById('historyType').value;
+    const historyCategory = document.getElementById('historyCategory').value;
+    
+    currentHistoryFilters = { type: historyType, category: historyCategory };
+    
+    const params = new URLSearchParams({
+      page: currentHistoryPage,
+      page_size: HISTORY_PAGE_SIZE
+    });
+    
+    if (historyType !== 'all') params.append('type', historyType);
+    if (historyCategory !== 'all') {
+      const [type, category] = historyCategory.split('|');
+      params.append('type', type);
+      params.append('category', category);
+    }
+    
+    const response = await fetchWithTimeout(`${API_URL}/api/prices/historical?${params}`, {
       timeout: 15000
     });
     
     if (response.ok) {
       const data = await response.json();
-      console.log('✅ Received history data response:', data);
+      console.log('✅ Received history data:', data);
       
-      // Handle response format
       if (data.success && data.data) {
         historyData = data.data.historical_data || [];
-        console.log(`📊 Loaded ${historyData.length} history records`);
-      } else {
-        historyData = data.historical_data || data.data || [];
+        const pagination = data.data.pagination || {};
+        
+        totalHistoryPages = pagination.total_pages || 1;
+        totalHistoryRecords = pagination.total_records || historyData.length;
+        
+        displayPriceHistory(historyData, historyType, historyCategory, pagination);
+        updateDebugInfo(`✅ Loaded ${historyData.length} history records (Page ${currentHistoryPage} of ${totalHistoryPages})`);
       }
-      
-      // Sort by date (newest first) if not already sorted
-      historyData.sort((a, b) => new Date(b.date) - new Date(a.date));
-      
-      currentHistoryPage = 1;
-      showAllData = false;
-      filterHistory();
-      updateDebugInfo(`✅ Kasaysayan ng presyo ay nakuha na (${historyData.length} records)`);
     } else {
       console.error('❌ API response not OK for history:', response.status);
       throw new Error(`API responded with status: ${response.status}`);
@@ -509,32 +521,20 @@ async function showPriceHistory() {
     showError('historyContent', `Hindi makakuha ng kasaysayan ng presyo: ${error.message}`);
     updateDebugInfo(`❌ Hindi makakuha ng kasaysayan: ${error.message}`, true);
   } finally {
-    if (historyLoading) historyLoading.style.display = 'none';
+    if (historyLoadingElement) historyLoadingElement.style.display = 'none';
   }
 }
 
-function filterHistory() {
-  const historyType = document.getElementById('historyType').value;
-  const historyCategory = document.getElementById('historyCategory').value;
-  
-  if (historyData.length > 0) {
-    displayPriceHistory(historyData, historyType, historyCategory);
-  }
-}
-
-function displayPriceHistory(data, historyType, historyCategory) {
+function displayPriceHistory(data, historyType, historyCategory, pagination) {
   const historyContent = getElementSafe('historyContent');
   if (!historyContent) return;
   
-  // Filter out NFA rice data
   let filteredData = data.filter(item => item.type !== 'NFA_RICE');
   
-  // Apply type filter
   if (historyType !== 'all') {
     filteredData = filteredData.filter(item => item.type === historyType);
   }
   
-  // Apply category filter
   if (historyCategory !== 'all') {
     const [type, category] = historyCategory.split('|');
     filteredData = filteredData.filter(item => 
@@ -547,42 +547,27 @@ function displayPriceHistory(data, historyType, historyCategory) {
     return;
   }
 
-  let displayData = filteredData;
-  let totalPages = 1;
-  let startIndex = 0;
-  let endIndex = filteredData.length;
-
-  if (!showAllData) {
-    totalPages = Math.ceil(filteredData.length / HISTORY_PAGE_SIZE);
-    startIndex = (currentHistoryPage - 1) * HISTORY_PAGE_SIZE;
-    endIndex = Math.min(startIndex + HISTORY_PAGE_SIZE, filteredData.length);
-    displayData = filteredData.slice(startIndex, endIndex);
-  }
+  // Create pagination controls
+  const paginationHTML = `
+    <div class="pagination-controls">
+      <button onclick="previousHistoryPage()" ${currentHistoryPage === 1 ? 'disabled' : ''} class="pagination-btn">
+        <i class="fas fa-arrow-left"></i> Mas Luma
+      </button>
+      <span class="pagination-info">
+        Pahina ${currentHistoryPage} ng ${totalHistoryPages} 
+        (${pagination.total_records || filteredData.length} total na records)
+      </span>
+      <button onclick="nextHistoryPage()" ${currentHistoryPage === totalHistoryPages ? 'disabled' : ''} class="pagination-btn">
+        Mas Bago <i class="fas fa-arrow-right"></i>
+      </button>
+    </div>
+  `;
 
   let tableHTML = `
     <h4 style="text-align: center; margin-bottom: 15px; color: #5B3A29;">
       Kasaysayan ng Presyo - ${getHistoryTitle(historyType, historyCategory)}
-      ${showAllData ? '<br><small>(Ipinapakita ang LAHAT ng datos)</small>' : ''}
     </h4>
-  `;
-
-  if (!showAllData) {
-    tableHTML += `
-      <div class="pagination-controls">
-        <button onclick="previousHistoryPage()" ${currentHistoryPage === 1 ? 'disabled' : ''} class="pagination-btn">
-          <i class="fas fa-arrow-left"></i> Mas Luma
-        </button>
-        <span class="pagination-info">
-          Pahina ${currentHistoryPage} ng ${totalPages} (${filteredData.length} total)
-        </span>
-        <button onclick="nextHistoryPage()" ${currentHistoryPage === totalPages ? 'disabled' : ''} class="pagination-btn">
-          Mas Bago <i class="fas fa-arrow-right"></i>
-        </button>
-      </div>
-    `;
-  }
-
-  tableHTML += `
+    ${paginationHTML}
     <table class="history-table">
       <thead>
         <tr>
@@ -595,7 +580,7 @@ function displayPriceHistory(data, historyType, historyCategory) {
       <tbody>
   `;
   
-  displayData.forEach((item) => {
+  filteredData.forEach((item) => {
     const priceValue = typeof item.price === 'number' ? item.price.toFixed(2) : parseFloat(item.price).toFixed(2);
     const itemDate = new Date(item.date);
     const dateDisplay = itemDate.toLocaleDateString('en-PH');
@@ -613,55 +598,129 @@ function displayPriceHistory(data, historyType, historyCategory) {
   tableHTML += `
       </tbody>
     </table>
+    ${paginationHTML}
   `;
   
   historyContent.innerHTML = tableHTML;
 }
 
-function showAllHistory() {
-  showAllData = true;
-  const historyType = document.getElementById('historyType').value;
-  const historyCategory = document.getElementById('historyCategory').value;
-  displayPriceHistory(historyData, historyType, historyCategory);
-}
-
-function resetHistoryPagination() {
-  showAllData = false;
-  currentHistoryPage = 1;
-  const historyType = document.getElementById('historyType').value;
-  const historyCategory = document.getElementById('historyCategory').value;
-  displayPriceHistory(historyData, historyType, historyCategory);
-}
-
 function nextHistoryPage() {
-  const historyType = document.getElementById('historyType').value;
-  const historyCategory = document.getElementById('historyCategory').value;
-  
-  let filteredData = historyData.filter(item => item.type !== 'NFA_RICE');
-  if (historyType !== 'all') {
-    filteredData = filteredData.filter(item => item.type === historyType);
-  }
-  if (historyCategory !== 'all') {
-    const [type, category] = historyCategory.split('|');
-    filteredData = filteredData.filter(item => 
-      item.type === type && item.category === category
-    );
-  }
-  
-  const totalPages = Math.ceil(filteredData.length / HISTORY_PAGE_SIZE);
-  if (currentHistoryPage < totalPages) {
+  if (currentHistoryPage < totalHistoryPages) {
     currentHistoryPage++;
-    displayPriceHistory(historyData, historyType, historyCategory);
+    showPriceHistory();
   }
 }
 
 function previousHistoryPage() {
   if (currentHistoryPage > 1) {
     currentHistoryPage--;
-    const historyType = document.getElementById('historyType').value;
-    const historyCategory = document.getElementById('historyCategory').value;
-    displayPriceHistory(historyData, historyType, historyCategory);
+    showPriceHistory();
   }
+}
+
+function filterHistory() {
+  // Reset to first page when filters change
+  currentHistoryPage = 1;
+  showPriceHistory();
+}
+
+function showAllHistory() {
+  // For "Ipakita Lahat", we'll load a larger page size
+  const historyType = document.getElementById('historyType').value;
+  const historyCategory = document.getElementById('historyCategory').value;
+  
+  // Store current page size and temporarily increase it
+  const originalPageSize = HISTORY_PAGE_SIZE;
+  const largePageSize = 1000; // Large number to get all data
+  
+  // Create custom params for showing all data
+  const params = new URLSearchParams({
+    page: 1,
+    page_size: largePageSize
+  });
+  
+  if (historyType !== 'all') params.append('type', historyType);
+  if (historyCategory !== 'all') {
+    const [type, category] = historyCategory.split('|');
+    params.append('type', type);
+    params.append('category', category);
+  }
+  
+  const historyContent = getElementSafe('historyContent');
+  const historyLoadingElement = getElementSafe('historyLoading');
+
+  if (!historyContent || !historyLoadingElement) return;
+
+  historyLoadingElement.style.display = 'block';
+  historyContent.innerHTML = '';
+
+  fetchWithTimeout(`${API_URL}/api/prices/historical?${params}`, {
+    timeout: 15000
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success && data.data) {
+      const allData = data.data.historical_data || [];
+      const historyContent = getElementSafe('historyContent');
+      
+      let tableHTML = `
+        <h4 style="text-align: center; margin-bottom: 15px; color: #5B3A29;">
+          Kasaysayan ng Presyo - ${getHistoryTitle(historyType, historyCategory)}
+          <br><small>(Ipinapakita ang LAHAT ng datos - ${allData.length} records)</small>
+        </h4>
+        <div style="text-align: center; margin-bottom: 15px;">
+          <button onclick="resetHistoryPagination()" class="pagination-btn">
+            <i class="fas fa-sync"></i> Balik sa Normal na Pagination
+          </button>
+        </div>
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Petsa</th>
+              <th>Uri</th>
+              <th>Kategorya</th>
+              <th>Presyo (₱/kg)</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      allData.forEach((item) => {
+        const priceValue = typeof item.price === 'number' ? item.price.toFixed(2) : parseFloat(item.price).toFixed(2);
+        const itemDate = new Date(item.date);
+        const dateDisplay = itemDate.toLocaleDateString('en-PH');
+        
+        tableHTML += `
+          <tr>
+            <td>${dateDisplay}</td>
+            <td>${getDisplayName(item.type, '').split(' - ')[0]}</td>
+            <td>${getDisplayName('', item.category).split(' - ')[1] || item.category}</td>
+            <td><strong>₱${priceValue}</strong></td>
+          </tr>
+        `;
+      });
+      
+      tableHTML += `
+          </tbody>
+        </table>
+      `;
+      
+      historyContent.innerHTML = tableHTML;
+      updateDebugInfo(`✅ Ipinapakita ang LAHAT ng ${allData.length} records`);
+    }
+  })
+  .catch(error => {
+    console.error('❌ Error loading all history:', error);
+    showError('historyContent', `Hindi makakuha ng lahat ng kasaysayan: ${error.message}`);
+  })
+  .finally(() => {
+    historyLoadingElement.style.display = 'none';
+  });
+}
+
+function resetHistoryPagination() {
+  currentHistoryPage = 1;
+  showPriceHistory();
 }
 
 function getHistoryTitle(historyType, historyCategory) {
