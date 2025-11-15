@@ -1,541 +1,815 @@
-const express = require('express');
-const cors = require('cors');
-const regression = require('regression');
-const fs = require('fs');
-const csv = require('csv-parser');
-const path = require('path');
+// Replace your entire script section with this version:
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+<script>
+    // 🔄 BACKEND URL - UPDATE THIS WITH YOUR ACTUAL RENDER URL
+    const API_URL = 'https://riceup-backend.onrender.com';
+    let backendOnline = false;
 
-// Middleware
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  credentials: false
-}));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+    // Store available types and current data globally
+    let availableRiceTypes = {};
+    let currentPricesData = [];
+    let currentFilter = 'all';
 
-// Serve static files (if needed)
-app.use(express.static('public'));
-
-let riceData = [];
-let lastUpdate = new Date();
-
-// Load data from CSV file - ROBUST VERSION
-function loadRiceData() {
-  return new Promise((resolve, reject) => {
-    const results = [];
-    console.log('📁 Starting CSV load...');
+    // Price History with Year-based Filtering
+    let historyData = [];
+    let currentHistoryPage = 1;
+    const HISTORY_PAGE_SIZE = 50;
+    let showAllData = false;
     
-    // Try different possible file locations
-    const csvPaths = [
-      path.join(__dirname, 'rice_prices.csv'),
-      path.join(__dirname, 'data', 'rice_prices.csv'),
-      'rice_prices.csv'
-    ];
-    
-    let csvFile = null;
-    for (const csvPath of csvPaths) {
-      if (fs.existsSync(csvPath)) {
-        csvFile = csvPath;
-        console.log(`✅ Found CSV file at: ${csvPath}`);
-        break;
-      }
-    }
-    
-    if (!csvFile) {
-      console.error('❌ CSV file not found in any location');
-      reject(new Error('CSV file not found'));
-      return;
-    }
-    
-    fs.createReadStream(csvFile)
-      .pipe(csv())
-      .on('data', (data) => {
+    // Your specific years based on your dataset
+    const availableYears = ['2025', '2024', '2023']; // Your actual data years
+
+    // Enhanced fetch with timeout and retry
+    async function fetchWithTimeout(url, options = {}) {
+      const { timeout = 15000, retries = 1 } = options;
+      
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeout);
+        
         try {
-          // Skip empty rows and merge conflicts
-          if (!data || Object.keys(data).length === 0) return;
-          if (data['<<<<<<< HEAD'] || data['======='] || data['>>>>>>>']) {
-            console.log('🚫 Skipping merge conflict row');
-            return;
-          }
-          
-          // Extract data from CSV columns
-          let date, type, category, price;
-          
-          // Try different possible column names
-          const dateKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('date') || key.toLowerCase().includes('petsa')
-          );
-          const typeKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('type') || key.toLowerCase().includes('uri')
-          );
-          const categoryKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('category') || key.toLowerCase().includes('kategorya')
-          );
-          const priceKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('price') || key.toLowerCase().includes('presyo')
-          );
-          
-          date = dateKeys.length > 0 ? data[dateKeys[0]] : data[Object.keys(data)[0]];
-          type = typeKeys.length > 0 ? data[typeKeys[0]] : data[Object.keys(data)[1]];
-          category = categoryKeys.length > 0 ? data[categoryKeys[0]] : data[Object.keys(data)[2]];
-          price = priceKeys.length > 0 ? data[priceKeys[0]] : data[Object.keys(data)[3]];
-          
-          // Parse and validate data
-          let parsedDate;
-          try {
-            parsedDate = new Date(date);
-            if (isNaN(parsedDate.getTime())) {
-              // Try parsing as MM/DD/YYYY or other formats
-              const parts = date.split('/');
-              if (parts.length === 3) {
-                parsedDate = new Date(parts[2], parts[0] - 1, parts[1]);
-              }
-            }
-          } catch (e) {
-            console.log('⚠️ Invalid date, using current date:', date);
-            parsedDate = new Date();
-          }
-          
-          const cleanPrice = parseFloat(price?.toString().replace(/[^\d.-]/g, '') || '0');
-          
-          if (type && category && !isNaN(cleanPrice) && cleanPrice > 0) {
-            const record = {
-              date: parsedDate,
-              type: type.trim(),
-              category: category.trim(),
-              price: cleanPrice,
-              unit: 'PHP/kg'
-            };
-            
-            results.push(record);
-          }
+          const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+          });
+          clearTimeout(id);
+          return response;
         } catch (error) {
-          console.error('❌ Error parsing row:', error);
-        }
-      })
-      .on('end', () => {
-        console.log(`✅ Loaded ${results.length} valid records from CSV`);
-        
-        // Sort by date (newest first)
-        results.sort((a, b) => new Date(b.date) - new Date(a.date));
-        
-        lastUpdate = new Date();
-        resolve(results);
-      })
-      .on('error', (error) => {
-        console.error('❌ CSV read error:', error);
-        reject(error);
-      });
-  });
-}
-
-// Get current prices (latest date)
-function getCurrentPrices() {
-  if (riceData.length === 0) {
-    return { current_prices: [], as_of_date: new Date() };
-  }
-  
-  const latestDate = new Date(Math.max(...riceData.map(item => item.date.getTime())));
-  const currentData = riceData.filter(item => item.date.getTime() === latestDate.getTime());
-  
-  console.log(`📊 Current prices: ${currentData.length} records for ${latestDate.toDateString()}`);
-  
-  return {
-    current_prices: currentData,
-    as_of_date: latestDate
-  };
-}
-
-// Get historical data with pagination
-function getHistoricalData(filters = {}) {
-  let filteredData = [...riceData]; // Start with all data
-  
-  // Apply filters
-  if (filters.type && filters.type !== 'all') {
-    filteredData = filteredData.filter(item => item.type === filters.type);
-  }
-  
-  if (filters.category && filters.category !== 'all') {
-    filteredData = filteredData.filter(item => item.category === filters.category);
-  }
-  
-  // Sort by date (newest first)
-  filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
-  
-  const totalRecords = filteredData.length;
-  
-  // Pagination logic
-  if (filters.page && filters.page_size) {
-    const page = parseInt(filters.page);
-    const pageSize = parseInt(filters.page_size);
-    const startIndex = (page - 1) * pageSize;
-    const endIndex = startIndex + pageSize;
-    
-    const paginatedData = filteredData.slice(startIndex, endIndex);
-    
-    return {
-      data: paginatedData,
-      pagination: {
-        current_page: page,
-        page_size: pageSize,
-        total_records: totalRecords,
-        total_pages: Math.ceil(totalRecords / pageSize),
-        has_next: endIndex < totalRecords,
-        has_prev: page > 1
-      }
-    };
-  }
-  
-  // Limit if no pagination specified
-  if (filters.limit) {
-    filteredData = filteredData.slice(0, parseInt(filters.limit));
-  }
-  
-  return {
-    data: filteredData,
-    pagination: {
-      total_records: totalRecords
-    }
-  };
-}
-
-// Get data statistics
-function getDataStats() {
-  const validData = riceData.filter(item => item.price > 0);
-  const dates = [...new Set(validData.map(item => item.date.toISOString().split('T')[0]))].sort();
-  
-  const types = {};
-  riceData.forEach(item => {
-    if (!types[item.type]) types[item.type] = new Set();
-    types[item.type].add(item.category);
-  });
-  
-  return {
-    total_records: riceData.length,
-    valid_records: validData.length,
-    date_range: {
-      start: dates[0] || 'N/A',
-      end: dates[dates.length - 1] || 'N/A',
-      total_days: dates.length
-    },
-    rice_types: Object.keys(types),
-    categories: Object.values(types).map(set => Array.from(set)).flat(),
-    last_update: lastUpdate
-  };
-}
-
-// API Routes
-
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    message: 'RiceUp Backend API - Price Monitoring System',
-    version: '1.0.0',
-    data: getDataStats(),
-    endpoints: {
-      health: '/api/health',
-      types: '/api/prices/types',
-      current: '/api/prices/current',
-      historical: '/api/prices/historical',
-      stats: '/api/prices/stats',
-      predict: '/api/predict (POST)'
-    }
-  });
-});
-
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  const stats = getDataStats();
-  res.json({
-    success: true,
-    data: {
-      status: 'OK',
-      server_time: new Date().toISOString(),
-      ...stats,
-      uptime: process.uptime()
-    }
-  });
-});
-
-// Get available rice types and categories
-app.get('/api/prices/types', (req, res) => {
-  try {
-    const types = {};
-    riceData.forEach(item => {
-      if (!types[item.type]) types[item.type] = new Set();
-      types[item.type].add(item.category);
-    });
-    
-    const result = {};
-    Object.keys(types).forEach(type => {
-      result[type] = Array.from(types[type]);
-    });
-    
-    res.json({ 
-      success: true, 
-      data: result 
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get current prices
-app.get('/api/prices/current', (req, res) => {
-  try {
-    const currentPrices = getCurrentPrices();
-    res.json({ 
-      success: true, 
-      data: currentPrices 
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get historical data with pagination
-app.get('/api/prices/historical', (req, res) => {
-  try {
-    const { type, category, limit, page, page_size = '20' } = req.query;
-    
-    const result = getHistoricalData({ 
-      type, 
-      category, 
-      limit,
-      page: page || '1',
-      page_size 
-    });
-    
-    res.json({
-      success: true,
-      data: {
-        historical_data: result.data,
-        pagination: result.pagination
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get data statistics
-app.get('/api/prices/stats', (req, res) => {
-  try {
-    res.json({
-      success: true,
-      data: getDataStats()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Price prediction endpoint
-app.post('/api/predict', (req, res) => {
-  try {
-    const { type, category, weeks_ahead = 1 } = req.body;
-    
-    if (!type || !category) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: type and category'
-      });
-    }
-    
-    const filteredData = riceData.filter(item => 
-      item.type === type && 
-      item.category === category && 
-      item.price > 0
-    );
-    
-    if (filteredData.length < 2) {
-      return res.status(400).json({
-        success: false,
-        error: `Not enough historical data for ${type} - ${category}. Only ${filteredData.length} data points found.`
-      });
-    }
-    
-    // Sort by date and prepare data for regression
-    filteredData.sort((a, b) => a.date - b.date);
-    const regressionData = filteredData.map((item, index) => [index, item.price]);
-    
-    // Perform linear regression
-    const result = regression.linear(regressionData);
-    const predictedPrice = result.predict(filteredData.length + parseInt(weeks_ahead) - 1)[1];
-    
-    // Ensure positive price
-    const finalPredictedPrice = Math.max(0, predictedPrice);
-    
-    res.json({
-      success: true,
-      data: {
-        predicted_price: parseFloat(finalPredictedPrice.toFixed(2)),
-        confidence: parseFloat(result.r2.toFixed(4)),
-        data_points: filteredData.length,
-        type: type,
-        category: category,
-        weeks_ahead: parseInt(weeks_ahead)
-      }
-    });
-  } catch (error) {
-    console.error('Prediction error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Debug endpoint to check CSV data
-app.get('/api/debug/csv-sample', (req, res) => {
-  try {
-    const csvPath = path.join(__dirname, 'rice_prices.csv');
-    
-    if (!fs.existsSync(csvPath)) {
-      return res.json({ 
-        success: false, 
-        error: 'CSV file not found',
-        available_files: fs.readdirSync(__dirname)
-      });
-    }
-    
-    const content = fs.readFileSync(csvPath, 'utf8');
-    const lines = content.split('\n').slice(0, 10);
-    
-    res.json({
-      success: true,
-      sample_data: lines,
-      total_lines: content.split('\n').length,
-      file_size: content.length,
-      file_path: csvPath
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Error handling middleware
-app.use((error, req, res, next) => {
-  console.error('Unhandled error:', error);
-  res.status(500).json({
-    success: false,
-    error: 'Internal server error'
-  });
-});
-
-// 404 handler
-app.use('*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Endpoint not found'
-  });
-});
-
-// Initialize data and start server
-async function startServer() {
-  try {
-    console.log('🚀 Starting RiceUp Backend Server...');
-    console.log('📁 Current directory:', __dirname);
-    console.log('📁 Files in directory:', fs.readdirSync(__dirname));
-    
-    // Load data
-    riceData = await loadRiceData();
-    console.log('✅ Data loaded successfully');
-    console.log('📊 Data Statistics:', getDataStats());
-    
-    // Start server
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🎯 Server running on port ${PORT}`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`📊 API ready: http://localhost:${PORT}/`);
-    });
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  }
-}
-
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  process.exit(0);
-});
-
-// Add this endpoint to your backend index.js file:
-
-// Optimized historical data endpoint with year filtering
-app.get('/api/prices/historical/optimized', (req, res) => {
-  try {
-    const { type, category, year, limit = '1000' } = req.query;
-    
-    let filteredData = [...riceData];
-    
-    // Apply filters more efficiently
-    if (type && type !== 'all') {
-      filteredData = filteredData.filter(item => item.type === type);
-    }
-    
-    if (category && category !== 'all') {
-      filteredData = filteredData.filter(item => item.category === category);
-    }
-    
-    if (year) {
-      const targetYear = parseInt(year);
-      filteredData = filteredData.filter(item => 
-        new Date(item.date).getFullYear() === targetYear
-      );
-    }
-    
-    // Sort by date (newest first)
-    filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
-    
-    // Apply limit
-    const limitedData = filteredData.slice(0, parseInt(limit));
-    
-    res.json({
-      success: true,
-      data: {
-        historical_data: limitedData,
-        total_records: filteredData.length,
-        displayed_records: limitedData.length,
-        date_range: {
-          start: limitedData[limitedData.length - 1]?.date || 'N/A',
-          end: limitedData[0]?.date || 'N/A'
+          clearTimeout(id);
+          if (attempt === retries) throw error;
+          console.log(`Retrying ${url}... (attempt ${attempt + 1})`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+    }
 
-// Start the server
-startServer();
+    // Update debug info
+    function updateDebugInfo(message, isError = false) {
+      const debugContent = document.getElementById('debugContent');
+      debugContent.innerHTML = message;
+      debugContent.style.color = isError ? '#dc3545' : '#28a745';
+    }
+
+    // Check backend connection first
+    async function checkBackendConnection() {
+      try {
+        console.log('🔍 Checking backend connection to:', API_URL);
+        updateDebugInfo('Sinusuri ang koneksyon sa backend...');
+        
+        const response = await fetchWithTimeout(`${API_URL}/api/health`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('✅ Backend is online:', data);
+          backendOnline = true;
+          
+          document.getElementById('connectionStatus').style.display = 'none';
+          document.getElementById('successStatus').style.display = 'block';
+          document.getElementById('successMessage').textContent = 
+            `Nakakonekta sa backend! ${data.data?.total_records || 0} records loaded`;
+          
+          updateDebugInfo(`✅ Backend connected: ${data.data?.status || 'OK'}`);
+          return true;
+        } else {
+          throw new Error(`Backend responded with status: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('❌ Backend connection failed:', error);
+        backendOnline = false;
+        document.getElementById('connectionStatus').style.display = 'block';
+        document.getElementById('successStatus').style.display = 'none';
+        updateDebugInfo(`❌ Connection failed: ${error.message}`, true);
+        
+        const connectionStatus = document.getElementById('connectionStatus');
+        connectionStatus.innerHTML = `
+          <p><i class="fas fa-exclamation-triangle"></i> Hindi makakonekta sa server. Pakisubukan muli mamaya.</p>
+          <button onclick="retryConnection()" style="
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #6B8E23;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+          ">
+            <i class="fas fa-redo"></i> Subukan Muli
+          </button>
+        `;
+        return false;
+      }
+    }
+
+    // Add retry function
+    function retryConnection() {
+      initializeApp();
+    }
+
+    // Populate year dropdown with your specific years
+    function populateYearDropdown() {
+      const yearSelect = document.getElementById('historyYear');
+      yearSelect.innerHTML = '<option value="all">Lahat ng Taon</option>';
+      
+      availableYears.forEach(year => {
+        const option = new Option(year.toString(), year.toString());
+        yearSelect.add(option);
+      });
+      
+      console.log(`✅ Populated year dropdown with your years: ${availableYears.join(', ')}`);
+    }
+
+    // Load available rice types from backend
+    async function loadRiceTypes() {
+      if (!backendOnline) {
+        console.log('Backend offline, using hardcoded rice types');
+        availableRiceTypes = {
+          'KADIWA_RICE_FOR_ALL': ['Premium', 'Well_Milled', 'Regular_Milled', 'P20'],
+          'LOCAL': ['Special', 'Premium', 'Well_Milled', 'Regular_Milled'],
+          'IMPORTED': ['Special', 'Premium', 'Well_Milled', 'Regular_Milled'],
+          'NFA_RICE': ['Well_Milled']
+        };
+        
+        populateDropdowns(availableRiceTypes);
+        updateDebugInfo('✅ Gamit ang mga hardcoded na uri ng bigas');
+        return;
+      }
+
+      try {
+        console.log('📥 Loading rice types from:', `${API_URL}/api/prices/types`);
+        updateDebugInfo('Kumukuha ng mga uri ng bigas...');
+        
+        const response = await fetchWithTimeout(`${API_URL}/api/prices/types`, {
+          timeout: 10000
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('✅ Received rice types response:', data);
+          
+          if (data.success && data.data) {
+            availableRiceTypes = data.data;
+          } else {
+            availableRiceTypes = data;
+          }
+          
+          console.log('📋 Available rice types:', availableRiceTypes);
+          populateDropdowns(availableRiceTypes);
+          updateDebugInfo(`✅ Mga uri ng bigas ay nakuha na (${Object.keys(availableRiceTypes).length} types)`);
+        } else {
+          console.error('❌ API response not OK for types:', response.status);
+          throw new Error(`API responded with status: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('❌ Error loading rice types:', error);
+        
+        console.log('🔄 Using hardcoded rice types based on CSV data');
+        availableRiceTypes = {
+          'KADIWA_RICE_FOR_ALL': ['Premium', 'Well_Milled', 'Regular_Milled', 'P20'],
+          'LOCAL': ['Special', 'Premium', 'Well_Milled', 'Regular_Milled'],
+          'IMPORTED': ['Special', 'Premium', 'Well_Milled', 'Regular_Milled'],
+          'NFA_RICE': ['Well_Milled']
+        };
+        
+        populateDropdowns(availableRiceTypes);
+        updateDebugInfo('✅ Gamit ang mga hardcoded na uri ng bigas');
+      }
+    }
+
+    function populateDropdowns(typesData) {
+      const predictionTypeSelect = document.getElementById('predictionType');
+      const historyCategorySelect = document.getElementById('historyCategory');
+      
+      console.log('📋 Populating dropdowns with:', typesData);
+      
+      predictionTypeSelect.innerHTML = '<option value="">Pumili ng Uri ng Bigas</option>';
+      historyCategorySelect.innerHTML = '<option value="all">Lahat ng Kategorya</option>';
+      
+      let totalOptions = 0;
+      
+      for (const [riceType, categories] of Object.entries(typesData)) {
+        if (Array.isArray(categories)) {
+          categories.forEach(category => {
+            if (riceType === 'NFA_RICE') return;
+            
+            const displayName = getDisplayName(riceType, category);
+            const value = `${riceType}|${category}`;
+            
+            const predictionOption = new Option(displayName, value);
+            predictionTypeSelect.add(predictionOption);
+            
+            const historyOption = new Option(displayName, value);
+            historyCategorySelect.add(historyOption);
+            
+            totalOptions++;
+          });
+        }
+      }
+      
+      console.log(`✅ Added ${totalOptions} options to dropdowns`);
+    }
+
+    function getDisplayName(type, category) {
+      const typeNames = {
+        'KADIWA_RICE_FOR_ALL': 'Kadiwa',
+        'LOCAL': 'Local',
+        'IMPORTED': 'Imported',
+        'NFA_RICE': 'NFA'
+      };
+      
+      const categoryNames = {
+        'Well_Milled': 'Well Milled',
+        'Special': 'Special',
+        'Premium': 'Premium', 
+        'Regular_Milled': 'Regular Milled',
+        'P20': 'P20'
+      };
+      
+      return `${typeNames[type] || type} - ${categoryNames[category] || category}`;
+    }
+
+    // Load current prices
+    async function loadCurrentPrices() {
+      if (!backendOnline) {
+        showError('riceTypesContainer', 'Hindi makakonekta sa server upang kunin ang mga presyo.');
+        showSampleData();
+        return;
+      }
+
+      const loadingIndicator = document.getElementById('loadingIndicator');
+      const riceContainer = document.getElementById('riceTypesContainer');
+      
+      loadingIndicator.style.display = 'block';
+      riceContainer.innerHTML = '';
+      riceContainer.appendChild(loadingIndicator);
+
+      try {
+        console.log('💰 Fetching current prices from:', `${API_URL}/api/prices/current`);
+        updateDebugInfo('Kumukuha ng mga kasalukuyang presyo...');
+        
+        const response = await fetchWithTimeout(`${API_URL}/api/prices/current`, {
+          timeout: 20000
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('✅ Received current prices response:', data);
+          
+          currentPricesData = [];
+          
+          if (data.success && data.data) {
+            currentPricesData = data.data.current_prices || [];
+            console.log('📊 Current prices data:', currentPricesData);
+            
+            checkDataFreshness(currentPricesData);
+            
+            const asOfDate = data.data.as_of_date;
+            displayCurrentPrices(currentPricesData, 'all', asOfDate);
+            updateDebugInfo(`✅ Mga kasalukuyang presyo ay nakuha na (${currentPricesData.length} records)`);
+          } else {
+            throw new Error('Invalid response format from server');
+          }
+        } else {
+          const errorData = await response.json();
+          throw new Error(errorData.error || `API responded with status: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('❌ Error loading prices:', error);
+        showError('riceTypesContainer', `Hindi makakuha ng mga kasalukuyang presyo: ${error.message}`);
+        updateDebugInfo(`❌ Hindi makakuha ng mga presyo: ${error.message}`, true);
+        
+        showSampleData();
+      }
+    }
+
+    // Fallback sample data display
+    function showSampleData() {
+      const riceContainer = document.getElementById('riceTypesContainer');
+      const priceBox = document.getElementById('pricePrintBox');
+      
+      const sampleData = [
+        { type: 'LOCAL', category: 'Special', price: 58.50 },
+        { type: 'LOCAL', category: 'Premium', price: 53.50 },
+        { type: 'LOCAL', category: 'Well_Milled', price: 48.00 },
+        { type: 'IMPORTED', category: 'Special', price: 57.00 },
+        { type: 'IMPORTED', category: 'Premium', price: 52.00 },
+        { type: 'KADIWA_RICE_FOR_ALL', category: 'Well_Milled', price: 40.00 }
+      ];
+      
+      displayCurrentPrices(sampleData, 'all', new Date());
+      
+      const warningDiv = document.getElementById('dataWarning');
+      warningDiv.style.display = 'block';
+      document.getElementById('warningText').textContent = 
+        '⚠️ Ipinapakita ang sample data. Ang backend ay hindi available.';
+    }
+
+    // Check if data is recent
+    function checkDataFreshness(prices) {
+      if (!prices || prices.length === 0) return;
+      
+      const currentYear = new Date().getFullYear();
+      let latestDate = null;
+      
+      prices.forEach(price => {
+        if (price.date) {
+          const priceDate = new Date(price.date);
+          if (!latestDate || priceDate > latestDate) {
+            latestDate = priceDate;
+          }
+        }
+      });
+      
+      const warningDiv = document.getElementById('dataWarning');
+      const warningText = document.getElementById('warningText');
+      
+      if (latestDate) {
+        const latestDateStr = latestDate.toLocaleDateString('en-PH');
+        const latestYear = latestDate.getFullYear();
+        
+        if (latestYear < currentYear) {
+          warningText.textContent = `ℹ️ Pinakabagong datos: ${latestDateStr}`;
+          warningDiv.style.display = 'block';
+        } else {
+          warningDiv.style.display = 'none';
+        }
+      }
+    }
+
+    // Display current prices
+    function displayCurrentPrices(prices, filterType, asOfDate) {
+      const riceContainer = document.getElementById('riceTypesContainer');
+      const priceBox = document.getElementById('pricePrintBox');
+      const loadingIndicator = document.getElementById('loadingIndicator');
+      const lastUpdated = document.getElementById('lastUpdated');
+
+      loadingIndicator.style.display = 'none';
+      riceContainer.innerHTML = '';
+
+      if (!prices || prices.length === 0) {
+        riceContainer.innerHTML = '<div class="error">Walang presyo na available.</div>';
+        priceBox.innerHTML = '<p>Walang datos na available</p>';
+        return;
+      }
+
+      let filteredPrices = prices.filter(price => price.type !== 'NFA_RICE');
+      if (filterType !== 'all') {
+        filteredPrices = filteredPrices.filter(price => price.type === filterType);
+      }
+
+      if (filteredPrices.length === 0) {
+        riceContainer.innerHTML = '<div class="error">Walang presyo na available para sa napiling uri.</div>';
+        priceBox.innerHTML = '<p>Walang datos para sa napiling uri</p>';
+        return;
+      }
+
+      filteredPrices.forEach(price => {
+        const displayName = getDisplayName(price.type, price.category);
+        const riceElement = document.createElement('div');
+        riceElement.className = 'rice-type';
+        riceElement.innerHTML = `
+          <span class="rice-type-name">${displayName}</span>
+          <span class="rice-type-price">₱${typeof price.price === 'number' ? price.price.toFixed(2) : price.price}/kg</span>
+        `;
+        riceContainer.appendChild(riceElement);
+      });
+
+      const validPrices = filteredPrices.filter(price => price.price > 0);
+      const averagePrice = validPrices.length > 0 ? 
+        validPrices.reduce((sum, price) => {
+          const priceValue = typeof price.price === 'number' ? price.price : parseFloat(price.price);
+          return sum + priceValue;
+        }, 0) / validPrices.length : 0;
+      
+      priceBox.innerHTML = `
+        <p>Average Presyo:</p>
+        <p>₱${averagePrice.toFixed(2)}/kg</p>
+        <p><small>Batay sa ${validPrices.length} uri ng bigas</small></p>
+      `;
+
+      if (asOfDate) {
+        try {
+          lastUpdated.textContent = `Huling na-update: ${new Date(asOfDate).toLocaleDateString('en-PH')}`;
+        } catch (e) {
+          lastUpdated.textContent = `Huling na-update: ${asOfDate}`;
+        }
+      }
+    }
+
+    // Filter current prices
+    function filterCurrentPrices() {
+      const filterType = document.getElementById('priceTypeFilter').value;
+      currentFilter = filterType;
+      
+      if (currentPricesData.length > 0) {
+        const asOfDate = document.getElementById('lastUpdated').textContent.replace('Huling na-update: ', '');
+        displayCurrentPrices(currentPricesData, filterType, asOfDate);
+      }
+    }
+
+    // Price History Functions - YEAR-BASED FILTERING
+    async function showPriceHistory() {
+      if (!backendOnline) {
+        showError('historyContent', 'Hindi makakonekta sa server upang kunin ang kasaysayan ng presyo.');
+        return;
+      }
+
+      const historyContent = document.getElementById('historyContent');
+      const historyLoading = document.getElementById('historyLoading');
+
+      historyLoading.style.display = 'block';
+      historyContent.innerHTML = '';
+
+      try {
+        console.log('📊 Fetching history from:', `${API_URL}/api/prices/historical?limit=500`);
+        updateDebugInfo('Kumukuha ng kasaysayan ng presyo...');
+        
+        const response = await fetchWithTimeout(`${API_URL}/api/prices/historical?limit=500`, {
+          timeout: 15000
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('✅ Received history data response:', data);
+          
+          if (data.success && data.data) {
+            historyData = data.data.historical_data || [];
+            console.log(`📊 Loaded ${historyData.length} history records`);
+          } else {
+            historyData = data.historical_data || data.data || [];
+          }
+          
+          historyData.sort((a, b) => new Date(b.date) - new Date(a.date));
+          
+          currentHistoryPage = 1;
+          showAllData = false;
+          filterHistory();
+          updateDebugInfo(`✅ Kasaysayan ng presyo ay nakuha na (${historyData.length} records)`);
+        } else {
+          console.error('❌ API response not OK for history:', response.status);
+          throw new Error(`API responded with status: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('❌ Error loading history:', error);
+        showError('historyContent', `Hindi makakuha ng kasaysayan ng presyo: ${error.message}`);
+        updateDebugInfo(`❌ Hindi makakuha ng kasaysayan: ${error.message}`, true);
+      } finally {
+        historyLoading.style.display = 'none';
+      }
+    }
+
+    // Year-based filtering function
+    async function filterHistoryByYear() {
+      const year = document.getElementById('historyYear').value;
+      const historyType = document.getElementById('historyType').value;
+      const historyCategory = document.getElementById('historyCategory').value;
+      
+      if (year === 'all') {
+        await showPriceHistory();
+      } else {
+        await loadHistoryByYear(year, historyType, historyCategory);
+      }
+    }
+
+    async function loadHistoryByYear(year, type, category) {
+      if (!backendOnline) {
+        showError('historyContent', 'Hindi makakonekta sa server.');
+        return;
+      }
+
+      const historyContent = document.getElementById('historyContent');
+      const historyLoading = document.getElementById('historyLoading');
+
+      historyLoading.style.display = 'block';
+      historyContent.innerHTML = '';
+
+      try {
+        let url = `${API_URL}/api/prices/historical/optimized?year=${year}&limit=1000`;
+        if (type !== 'all') url += `&type=${type}`;
+        if (category !== 'all') {
+          const [filterType, filterCategory] = category.split('|');
+          url += `&type=${filterType}&category=${filterCategory}`;
+        }
+        
+        console.log('📊 Fetching year-based history:', url);
+        
+        const response = await fetchWithTimeout(url, { timeout: 15000 });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.data) {
+            historyData = data.data.historical_data || [];
+            console.log(`📊 Loaded ${historyData.length} records for year ${year}`);
+            
+            currentHistoryPage = 1;
+            showAllData = true;
+            displayPriceHistory(historyData, type, category);
+            updateDebugInfo(`✅ Kasaysayan para sa ${year} ay nakuha na (${historyData.length} records)`);
+          } else {
+            throw new Error('Invalid response format');
+          }
+        } else {
+          throw new Error(`Server responded with status: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('❌ Error loading year history:', error);
+        showError('historyContent', `Hindi makakuha ng kasaysayan para sa ${year}: ${error.message}`);
+        updateDebugInfo(`❌ Hindi makakuha ng kasaysayan: ${error.message}`, true);
+      } finally {
+        historyLoading.style.display = 'none';
+      }
+    }
+
+    function filterHistory() {
+      const historyType = document.getElementById('historyType').value;
+      const historyCategory = document.getElementById('historyCategory').value;
+      const historyYear = document.getElementById('historyYear').value;
+      
+      if (historyYear === 'all') {
+        if (historyData.length > 0) {
+          displayPriceHistory(historyData, historyType, historyCategory);
+        }
+      } else {
+        filterHistoryByYear();
+      }
+    }
+
+    function displayPriceHistory(data, historyType, historyCategory) {
+      const historyContent = document.getElementById('historyContent');
+      
+      let filteredData = data.filter(item => item.type !== 'NFA_RICE');
+      
+      if (historyType !== 'all') {
+        filteredData = filteredData.filter(item => item.type === historyType);
+      }
+      
+      if (historyCategory !== 'all') {
+        const [type, category] = historyCategory.split('|');
+        filteredData = filteredData.filter(item => 
+          item.type === type && item.category === category
+        );
+      }
+      
+      if (!filteredData || filteredData.length === 0) {
+        historyContent.innerHTML = '<div class="error">Walang datos na available para sa napiling uri at kategorya.</div>';
+        return;
+      }
+
+      let displayData = filteredData;
+      let totalPages = 1;
+      let startIndex = 0;
+      let endIndex = filteredData.length;
+
+      if (!showAllData) {
+        totalPages = Math.ceil(filteredData.length / HISTORY_PAGE_SIZE);
+        startIndex = (currentHistoryPage - 1) * HISTORY_PAGE_SIZE;
+        endIndex = Math.min(startIndex + HISTORY_PAGE_SIZE, filteredData.length);
+        displayData = filteredData.slice(startIndex, endIndex);
+      }
+
+      let tableHTML = `
+        <h4 style="text-align: center; margin-bottom: 15px; color: #5B3A29;">
+          Kasaysayan ng Presyo - ${getHistoryTitle(historyType, historyCategory)}
+          ${showAllData ? '<br><small>(Ipinapakita ang LAHAT ng datos)</small>' : ''}
+        </h4>
+      `;
+
+      if (!showAllData) {
+        tableHTML += `
+          <div class="pagination-controls">
+            <button onclick="previousHistoryPage()" ${currentHistoryPage === 1 ? 'disabled' : ''} class="pagination-btn">
+              <i class="fas fa-arrow-left"></i> Mas Luma
+            </button>
+            <span class="pagination-info">
+              Pahina ${currentHistoryPage} ng ${totalPages} (${filteredData.length} total)
+            </span>
+            <button onclick="nextHistoryPage()" ${currentHistoryPage === totalPages ? 'disabled' : ''} class="pagination-btn">
+              Mas Bago <i class="fas fa-arrow-right"></i>
+            </button>
+          </div>
+        `;
+      }
+
+      tableHTML += `
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Petsa</th>
+              <th>Uri</th>
+              <th>Kategorya</th>
+              <th>Presyo (₱/kg)</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      displayData.forEach((item) => {
+        const priceValue = typeof item.price === 'number' ? item.price.toFixed(2) : parseFloat(item.price).toFixed(2);
+        const itemDate = new Date(item.date);
+        const dateDisplay = itemDate.toLocaleDateString('en-PH');
+        
+        tableHTML += `
+          <tr>
+            <td>${dateDisplay}</td>
+            <td>${getDisplayName(item.type, '').split(' - ')[0]}</td>
+            <td>${getDisplayName('', item.category).split(' - ')[1] || item.category}</td>
+            <td><strong>₱${priceValue}</strong></td>
+          </tr>
+        `;
+      });
+      
+      tableHTML += `
+          </tbody>
+        </table>
+      `;
+      
+      historyContent.innerHTML = tableHTML;
+    }
+
+    function showAllHistory() {
+      showAllData = true;
+      const historyType = document.getElementById('historyType').value;
+      const historyCategory = document.getElementById('historyCategory').value;
+      displayPriceHistory(historyData, historyType, historyCategory);
+    }
+
+    function resetHistoryPagination() {
+      showAllData = false;
+      currentHistoryPage = 1;
+      const historyType = document.getElementById('historyType').value;
+      const historyCategory = document.getElementById('historyCategory').value;
+      displayPriceHistory(historyData, historyType, historyCategory);
+    }
+
+    function nextHistoryPage() {
+      const historyType = document.getElementById('historyType').value;
+      const historyCategory = document.getElementById('historyCategory').value;
+      
+      let filteredData = historyData.filter(item => item.type !== 'NFA_RICE');
+      if (historyType !== 'all') {
+        filteredData = filteredData.filter(item => item.type === historyType);
+      }
+      if (historyCategory !== 'all') {
+        const [type, category] = historyCategory.split('|');
+        filteredData = filteredData.filter(item => 
+          item.type === type && item.category === category
+        );
+      }
+      
+      const totalPages = Math.ceil(filteredData.length / HISTORY_PAGE_SIZE);
+      if (currentHistoryPage < totalPages) {
+        currentHistoryPage++;
+        displayPriceHistory(historyData, historyType, historyCategory);
+      }
+    }
+
+    function previousHistoryPage() {
+      if (currentHistoryPage > 1) {
+        currentHistoryPage--;
+        const historyType = document.getElementById('historyType').value;
+        const historyCategory = document.getElementById('historyCategory').value;
+        displayPriceHistory(historyData, historyType, historyCategory);
+      }
+    }
+
+    function getHistoryTitle(historyType, historyCategory) {
+      if (historyCategory !== 'all') {
+        const [type, category] = historyCategory.split('|');
+        return getDisplayName(type, category);
+      } else if (historyType !== 'all') {
+        return getDisplayName(historyType, '');
+      } else {
+        return 'Lahat ng Uri ng Bigas';
+      }
+    }
+
+    // Price Prediction
+    async function predictPrice() {
+      if (!backendOnline) {
+        alert('Hindi makakonekta sa server. Pakisubukan muli mamaya.');
+        return;
+      }
+
+      const selectedValue = document.getElementById('predictionType').value;
+      
+      if (!selectedValue) {
+        alert('Mangyaring pumili ng uri ng bigas muna.');
+        return;
+      }
+      
+      const [riceType, category] = selectedValue.split('|');
+      const weeksAhead = parseInt(document.getElementById('predictionWeeks').value);
+      const resultDiv = document.getElementById('predictionResult');
+      const loadingDiv = document.getElementById('predictionLoading');
+      const priceDiv = document.getElementById('predictedPrice');
+      const detailsDiv = document.getElementById('predictionDetails');
+
+      loadingDiv.style.display = 'block';
+      resultDiv.style.display = 'none';
+
+      try {
+        console.log('🔮 Making prediction request to:', `${API_URL}/api/predict`);
+        updateDebugInfo('Gumagawa ng hula sa presyo...');
+        
+        const response = await fetchWithTimeout(`${API_URL}/api/predict`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            type: riceType,
+            category: category,
+            weeks_ahead: weeksAhead
+          }),
+          timeout: 20000
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log('✅ Prediction result:', data);
+          
+          const predictedPrice = data.data?.predicted_price || data.predicted_price;
+          if (predictedPrice) {
+            const priceValue = parseFloat(predictedPrice);
+            priceDiv.textContent = `₱${priceValue.toFixed(2)}/kg`;
+            
+            const futureDate = new Date();
+            futureDate.setDate(futureDate.getDate() + (weeksAhead * 7));
+            const futureDateStr = futureDate.toLocaleDateString('en-PH');
+            
+            detailsDiv.textContent = `Presyo ng ${getDisplayName(riceType, category)} para sa ${futureDateStr} (${weeksAhead} linggo mula ngayon)`;
+            resultDiv.style.display = 'block';
+            updateDebugInfo('✅ Hula sa presyo ay nakumpleto');
+          } else {
+            throw new Error('Walang prediction result na naibalik');
+          }
+        } else {
+          const errorText = await response.text();
+          throw new Error(`Prediction failed: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('❌ Prediction error:', error);
+        priceDiv.textContent = '₱--.--/kg';
+        detailsDiv.textContent = `Hindi makabuo ng hula: ${error.message}`;
+        resultDiv.style.display = 'block';
+        updateDebugInfo(`❌ Hindi makabuo ng hula: ${error.message}`, true);
+      } finally {
+        loadingDiv.style.display = 'none';
+      }
+    }
+
+    // Utility functions
+    function showError(containerId, message) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = `<div class="error">${message}</div>`;
+    }
+
+    // Initialize the application
+    async function initializeApp() {
+      console.log('🚀 Initializing RiceUp application...');
+      updateDebugInfo('Inisyal ang aplikasyon...');
+      
+      try {
+        // First check backend connection
+        const connected = await checkBackendConnection();
+        
+        if (connected) {
+          // Populate year dropdown with your specific years
+          populateYearDropdown();
+          
+          // Load rice types FIRST (this populates the dropdowns)
+          await loadRiceTypes();
+          
+          // Then load other data in parallel
+          await Promise.all([
+            loadCurrentPrices(),
+            showPriceHistory()
+          ]);
+          
+          console.log('✅ RiceUp application initialized successfully!');
+          updateDebugInfo('✅ Aplikasyon ay handa na!');
+        } else {
+          console.error('❌ Application initialization failed: Backend offline');
+          // Still try to load with fallback data
+          populateYearDropdown();
+          await loadRiceTypes();
+          showSampleData();
+        }
+      } catch (error) {
+        console.error('❌ Application initialization error:', error);
+        updateDebugInfo(`❌ Error sa aplikasyon: ${error.message}`, true);
+        
+        // Load with fallback data even if initialization fails
+        populateYearDropdown();
+        await loadRiceTypes();
+        showSampleData();
+      }
+    }
+
+    // Start the application
+    window.onload = initializeApp;
+  </script>
