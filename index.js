@@ -23,7 +23,7 @@ app.use(express.static('public'));
 let riceData = [];
 let lastUpdate = new Date();
 
-// Load data from CSV file - ROBUST VERSION
+// Load data from CSV file - IMPROVED VERSION
 function loadRiceData() {
   return new Promise((resolve, reject) => {
     const results = [];
@@ -51,10 +51,12 @@ function loadRiceData() {
       return;
     }
     
+    let rowCount = 0;
     fs.createReadStream(csvFile)
       .pipe(csv())
       .on('data', (data) => {
         try {
+          rowCount++;
           // Skip empty rows and merge conflicts
           if (!data || Object.keys(data).length === 0) return;
           if (data['<<<<<<< HEAD'] || data['======='] || data['>>>>>>>']) {
@@ -62,42 +64,63 @@ function loadRiceData() {
             return;
           }
           
-          // Extract data from CSV columns
+          // Extract data from CSV columns - MORE FLEXIBLE APPROACH
           let date, type, category, price;
           
-          // Try different possible column names
-          const dateKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('date') || key.toLowerCase().includes('petsa')
-          );
-          const typeKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('type') || key.toLowerCase().includes('uri')
-          );
-          const categoryKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('category') || key.toLowerCase().includes('kategorya')
-          );
-          const priceKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('price') || key.toLowerCase().includes('presyo')
-          );
+          // Get all column names for debugging
+          const columns = Object.keys(data);
+          if (rowCount === 1) {
+            console.log('📋 CSV Columns:', columns);
+          }
           
-          date = dateKeys.length > 0 ? data[dateKeys[0]] : data[Object.keys(data)[0]];
-          type = typeKeys.length > 0 ? data[typeKeys[0]] : data[Object.keys(data)[1]];
-          category = categoryKeys.length > 0 ? data[categoryKeys[0]] : data[Object.keys(data)[2]];
-          price = priceKeys.length > 0 ? data[priceKeys[0]] : data[Object.keys(data)[3]];
+          // More flexible column detection
+          date = data['Date'] || data['date'] || data['DATE'] || data['Petsa'] || data['petsa'] || columns[0];
+          type = data['Type'] || data['type'] || data['TYPE'] || data['Uri'] || data['uri'] || columns[1];
+          category = data['Category'] || data['category'] || data['CATEGORY'] || data['Kategorya'] || data['kategorya'] || columns[2];
+          price = data['Price'] || data['price'] || data['PRICE'] || data['Presyo'] || data['presyo'] || columns[3];
           
-          // Parse and validate data
+          // Parse and validate data - IMPROVED DATE PARSING
           let parsedDate;
           try {
+            // Try multiple date formats
             parsedDate = new Date(date);
             if (isNaN(parsedDate.getTime())) {
-              // Try parsing as MM/DD/YYYY or other formats
-              const parts = date.split('/');
-              if (parts.length === 3) {
-                parsedDate = new Date(parts[2], parts[0] - 1, parts[1]);
+              // Try MM/DD/YYYY
+              const parts1 = date.split('/');
+              if (parts1.length === 3) {
+                parsedDate = new Date(parts1[2], parts1[0] - 1, parts1[1]);
+              }
+              
+              if (isNaN(parsedDate.getTime())) {
+                // Try YYYY-MM-DD
+                const parts2 = date.split('-');
+                if (parts2.length === 3) {
+                  parsedDate = new Date(parts2[0], parts2[1] - 1, parts2[2]);
+                }
+              }
+              
+              if (isNaN(parsedDate.getTime())) {
+                // Try DD-MM-YYYY
+                const parts3 = date.split('-');
+                if (parts3.length === 3) {
+                  parsedDate = new Date(parts3[2], parts3[1] - 1, parts3[0]);
+                }
               }
             }
+            
+            // If still invalid, use a fallback date
+            if (isNaN(parsedDate.getTime())) {
+              console.log(`⚠️ Invalid date format: "${date}", using fallback date`);
+              // Use a date based on row count to spread out the data
+              const baseDate = new Date('2023-01-01');
+              baseDate.setDate(baseDate.getDate() + rowCount);
+              parsedDate = baseDate;
+            }
           } catch (e) {
-            console.log('⚠️ Invalid date, using current date:', date);
-            parsedDate = new Date();
+            console.log('⚠️ Date parsing error, using fallback:', date);
+            const baseDate = new Date('2023-01-01');
+            baseDate.setDate(baseDate.getDate() + rowCount);
+            parsedDate = baseDate;
           }
           
           const cleanPrice = parseFloat(price?.toString().replace(/[^\d.-]/g, '') || '0');
@@ -108,20 +131,41 @@ function loadRiceData() {
               type: type.trim(),
               category: category.trim(),
               price: cleanPrice,
-              unit: 'PHP/kg'
+              unit: 'PHP/kg',
+              original_date: date // Keep original for debugging
             };
             
             results.push(record);
+            
+            // Log first few records for debugging
+            if (results.length <= 3) {
+              console.log('📝 Sample record:', {
+                original_date: date,
+                parsed_date: parsedDate.toISOString().split('T')[0],
+                type: type,
+                category: category,
+                price: cleanPrice
+              });
+            }
+          } else {
+            console.log('🚫 Skipping invalid row:', { date, type, category, price: cleanPrice });
           }
         } catch (error) {
-          console.error('❌ Error parsing row:', error);
+          console.error('❌ Error parsing row:', error, data);
         }
       })
       .on('end', () => {
-        console.log(`✅ Loaded ${results.length} valid records from CSV`);
+        console.log(`✅ Loaded ${results.length} valid records from ${rowCount} total rows`);
         
         // Sort by date (newest first)
         results.sort((a, b) => new Date(b.date) - new Date(a.date));
+        
+        // Log date range
+        if (results.length > 0) {
+          const oldest = new Date(results[results.length - 1].date);
+          const newest = new Date(results[0].date);
+          console.log(`📅 Date range: ${oldest.toISOString().split('T')[0]} to ${newest.toISOString().split('T')[0]}`);
+        }
         
         lastUpdate = new Date();
         resolve(results);
@@ -154,30 +198,19 @@ function getCurrentPrices() {
 function getHistoricalData(filters = {}) {
   console.log(`📊 Getting historical data. Total records: ${riceData.length}`);
   
-  // Debug: Show sample of dates in the data
-  const sampleDates = riceData.slice(0, 5).map(item => ({
-    date: item.date,
-    formatted: new Date(item.date).toISOString()
-  }));
-  console.log('📅 Sample dates in data:', sampleDates);
-  
-  let filteredData = [...riceData]; // Start with all data
+  let filteredData = [...riceData]; // Start with ALL data
   
   // Apply filters
   if (filters.type && filters.type !== 'all') {
     filteredData = filteredData.filter(item => item.type === filters.type);
-    console.log(`🔍 After type filter (${filters.type}): ${filteredData.length} records`);
   }
   
   if (filters.category && filters.category !== 'all') {
     filteredData = filteredData.filter(item => item.category === filters.category);
-    console.log(`🔍 After category filter (${filters.category}): ${filteredData.length} records`);
   }
   
   // Sort by date (newest first) - BUT DON'T FILTER TO LATEST DATE ONLY
   filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
-  
-  console.log(`✅ Final filtered data: ${filteredData.length} records`);
   
   const totalRecords = filteredData.length;
   
@@ -205,9 +238,7 @@ function getHistoricalData(filters = {}) {
   
   // Limit if no pagination specified
   if (filters.limit) {
-    const limit = parseInt(filters.limit);
-    console.log(`📋 Applying limit: ${limit} records`);
-    filteredData = filteredData.slice(0, limit);
+    filteredData = filteredData.slice(0, parseInt(filters.limit));
   }
   
   return {
@@ -229,6 +260,13 @@ function getDataStats() {
     types[item.type].add(item.category);
   });
   
+  // Calculate year distribution
+  const years = {};
+  riceData.forEach(item => {
+    const year = new Date(item.date).getFullYear();
+    years[year] = (years[year] || 0) + 1;
+  });
+  
   return {
     total_records: riceData.length,
     valid_records: validData.length,
@@ -237,6 +275,7 @@ function getDataStats() {
       end: dates[dates.length - 1] || 'N/A',
       total_days: dates.length
     },
+    years_distribution: years,
     rice_types: Object.keys(types),
     categories: Object.values(types).map(set => Array.from(set)).flat(),
     last_update: lastUpdate
@@ -258,7 +297,8 @@ app.get('/', (req, res) => {
       current: '/api/prices/current',
       historical: '/api/prices/historical',
       stats: '/api/prices/stats',
-      predict: '/api/predict (POST)'
+      predict: '/api/predict (POST)',
+      debug: '/api/debug/all-data'
     }
   });
 });
@@ -362,7 +402,7 @@ app.get('/api/prices/stats', (req, res) => {
   }
 });
 
-// PRICE PREDICTION ENDPOINT
+// Price prediction endpoint
 app.post('/api/predict', (req, res) => {
   try {
     const { type, category, weeks_ahead = 1 } = req.body;
@@ -467,6 +507,46 @@ app.get('/api/prices/historical/optimized', (req, res) => {
   }
 });
 
+// DEBUG ENDPOINT - Check all data
+app.get('/api/debug/all-data', (req, res) => {
+  try {
+    // Group data by year to see what you actually have
+    const dataByYear = {};
+    riceData.forEach(item => {
+      const year = new Date(item.date).getFullYear();
+      if (!dataByYear[year]) {
+        dataByYear[year] = [];
+      }
+      dataByYear[year].push(item);
+    });
+    
+    // Count records per year
+    const yearCounts = {};
+    Object.keys(dataByYear).forEach(year => {
+      yearCounts[year] = dataByYear[year].length;
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        total_records: riceData.length,
+        records_by_year: yearCounts,
+        sample_records: riceData.slice(0, 10), // First 10 records
+        available_years: Object.keys(dataByYear).sort((a, b) => b - a),
+        date_range: {
+          start: riceData[riceData.length - 1]?.date,
+          end: riceData[0]?.date
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Debug endpoint to check CSV data
 app.get('/api/debug/csv-sample', (req, res) => {
   try {
@@ -525,14 +605,16 @@ async function startServer() {
     // Load data
     riceData = await loadRiceData();
     console.log('✅ Data loaded successfully');
-    console.log('📊 Data Statistics:', getDataStats());
+    
+    const stats = getDataStats();
+    console.log('📊 Data Statistics:', stats);
     
     // Start server
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`🎯 Server running on port ${PORT}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
       console.log(`📊 API ready: http://localhost:${PORT}/`);
-      console.log(`📈 Optimized endpoint: http://localhost:${PORT}/api/prices/historical/optimized`);
+      console.log(`🐛 Debug endpoint: http://localhost:${PORT}/api/debug/all-data`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
@@ -549,42 +631,6 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
   process.exit(0);
-});
-
-// Add this debug endpoint to see all your data
-app.get('/api/debug/all-data', (req, res) => {
-  try {
-    // Group data by year to see what you actually have
-    const dataByYear = {};
-    riceData.forEach(item => {
-      const year = new Date(item.date).getFullYear();
-      if (!dataByYear[year]) {
-        dataByYear[year] = [];
-      }
-      dataByYear[year].push(item);
-    });
-    
-    // Count records per year
-    const yearCounts = {};
-    Object.keys(dataByYear).forEach(year => {
-      yearCounts[year] = dataByYear[year].length;
-    });
-    
-    res.json({
-      success: true,
-      data: {
-        total_records: riceData.length,
-        records_by_year: yearCounts,
-        sample_records: riceData.slice(0, 10), // First 10 records
-        available_years: Object.keys(dataByYear).sort((a, b) => b - a)
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
 });
 
 // Start the server
