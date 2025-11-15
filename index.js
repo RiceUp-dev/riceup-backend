@@ -150,21 +150,34 @@ function getCurrentPrices() {
   };
 }
 
-// Get historical data with pagination
+// Get historical data with pagination - FIXED VERSION
 function getHistoricalData(filters = {}) {
+  console.log(`📊 Getting historical data. Total records: ${riceData.length}`);
+  
+  // Debug: Show sample of dates in the data
+  const sampleDates = riceData.slice(0, 5).map(item => ({
+    date: item.date,
+    formatted: new Date(item.date).toISOString()
+  }));
+  console.log('📅 Sample dates in data:', sampleDates);
+  
   let filteredData = [...riceData]; // Start with all data
   
   // Apply filters
   if (filters.type && filters.type !== 'all') {
     filteredData = filteredData.filter(item => item.type === filters.type);
+    console.log(`🔍 After type filter (${filters.type}): ${filteredData.length} records`);
   }
   
   if (filters.category && filters.category !== 'all') {
     filteredData = filteredData.filter(item => item.category === filters.category);
+    console.log(`🔍 After category filter (${filters.category}): ${filteredData.length} records`);
   }
   
-  // Sort by date (newest first)
+  // Sort by date (newest first) - BUT DON'T FILTER TO LATEST DATE ONLY
   filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
+  
+  console.log(`✅ Final filtered data: ${filteredData.length} records`);
   
   const totalRecords = filteredData.length;
   
@@ -192,7 +205,9 @@ function getHistoricalData(filters = {}) {
   
   // Limit if no pagination specified
   if (filters.limit) {
-    filteredData = filteredData.slice(0, parseInt(filters.limit));
+    const limit = parseInt(filters.limit);
+    console.log(`📋 Applying limit: ${limit} records`);
+    filteredData = filteredData.slice(0, limit);
   }
   
   return {
