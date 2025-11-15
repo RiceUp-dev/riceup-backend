@@ -7,12 +7,13 @@ const csv = require('csv-parser');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+// Middleware - Fix CORS to allow all origins
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST'],
+  credentials: false
+}));
 app.use(express.json());
-
-// Remove static file serving since frontend is separate
-// app.use(express.static('public'));
 
 let riceData = [];
 let lastUpdate = new Date();
@@ -24,12 +25,13 @@ function loadRiceData() {
     fs.createReadStream('rice_prices.csv')
       .pipe(csv())
       .on('data', (data) => {
-        // Process the CSV data
+        // Clean up the price field (remove spaces)
+        const cleanPrice = data.price?.trim() || data['price ']?.trim() || '0';
         results.push({
           date: new Date(data.date),
           type: data.type,
           category: data.category,
-          price: parseFloat(data.price) || 0,
+          price: parseFloat(cleanPrice) || 0,
           unit: data.unit
         });
       })
@@ -53,17 +55,7 @@ loadRiceData()
   })
   .catch(error => {
     console.error('❌ Failed to load data:', error);
-    // Fallback to sample data if CSV fails
-    riceData = getSampleData();
   });
-
-// Fallback sample data
-function getSampleData() {
-  console.log('🔄 Using sample data as fallback');
-  return [
-    // ... your sample data here
-  ];
-}
 
 // Get available rice types and categories
 function getAvailableTypes() {
@@ -84,9 +76,74 @@ function getAvailableTypes() {
   return result;
 }
 
+// Get current prices (latest date for each type/category)
+function getCurrentPrices() {
+  const latestDate = new Date(Math.max(...riceData.map(item => item.date.getTime())));
+  const currentData = riceData.filter(item => item.date.getTime() === latestDate.getTime());
+  
+  return {
+    current_prices: currentData,
+    as_of_date: latestDate
+  };
+}
+
+// Get historical data with filtering
+function getHistoricalData(filters = {}) {
+  let filteredData = [...riceData];
+  
+  // Filter by type
+  if (filters.type && filters.type !== 'all') {
+    filteredData = filteredData.filter(item => item.type === filters.type);
+  }
+  
+  // Filter by category
+  if (filters.category && filters.category !== 'all') {
+    filteredData = filteredData.filter(item => item.category === filters.category);
+  }
+  
+  // Limit results if specified
+  if (filters.limit) {
+    filteredData = filteredData.slice(0, parseInt(filters.limit));
+  }
+  
+  return filteredData;
+}
+
 // Enhanced prediction with better error handling
 function predictPrice(riceType, category, weeksAhead = 1) {
-  // ... your existing prediction code
+  try {
+    // Filter data for the specific rice type and category
+    const filteredData = riceData.filter(item => 
+      item.type === riceType && item.category === category && item.price > 0
+    );
+    
+    if (filteredData.length < 2) {
+      throw new Error('Not enough historical data for prediction');
+    }
+    
+    // Sort by date
+    filteredData.sort((a, b) => a.date - b.date);
+    
+    // Prepare data for regression (use time index instead of dates)
+    const regressionData = filteredData.map((item, index) => [index, item.price]);
+    
+    // Perform linear regression
+    const result = regression.linear(regressionData);
+    
+    // Predict future price
+    const futureIndex = filteredData.length + weeksAhead - 1;
+    const predictedPrice = result.predict(futureIndex)[1];
+    
+    return {
+      predicted_price: Math.max(0, predictedPrice), // Ensure non-negative price
+      confidence: result.r2,
+      data_points: filteredData.length,
+      equation: result.equation
+    };
+  } catch (error) {
+    console.error('Prediction error:', error);
+    throw error;
+  }
 }
 
 // API Routes
@@ -114,27 +171,112 @@ app.get('/', (req, res) => {
 
 // Get available rice types
 app.get('/api/prices/types', (req, res) => {
-  // ... your existing code
+  try {
+    const types = getAvailableTypes();
+    res.json({
+      success: true,
+      data: types,
+      total_types: Object.keys(types).length
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch rice types'
+    });
+  }
 });
 
 // Get current prices (latest prices for each type/category)
 app.get('/api/prices/current', (req, res) => {
-  // ... your existing code
+  try {
+    const currentPrices = getCurrentPrices();
+    res.json({
+      success: true,
+      data: currentPrices
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch current prices'
+    });
+  }
 });
 
 // Get historical prices with optional filtering
 app.get('/api/prices/historical', (req, res) => {
-  // ... your existing code
+  try {
+    const { type, category, limit } = req.query;
+    const historicalData = getHistoricalData({ type, category, limit });
+    
+    res.json({
+      success: true,
+      data: {
+        historical_data: historicalData,
+        total_records: historicalData.length,
+        filters: { type, category, limit }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch historical prices'
+    });
+  }
 });
 
 // Get price statistics
 app.get('/api/prices/stats', (req, res) => {
-  // ... your existing code
+  try {
+    const currentPrices = getCurrentPrices();
+    const averagePrice = currentPrices.current_prices.reduce((sum, item) => sum + item.price, 0) / currentPrices.current_prices.length;
+    
+    res.json({
+      success: true,
+      data: {
+        average_price: averagePrice,
+        total_products: currentPrices.current_prices.length,
+        last_updated: currentPrices.as_of_date
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch price statistics'
+    });
+  }
 });
 
 // Price prediction endpoint
 app.post('/api/predict', (req, res) => {
-  // ... your existing code
+  try {
+    const { type, category, weeks_ahead = 1 } = req.body;
+    
+    if (!type || !category) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: type and category'
+      });
+    }
+    
+    const prediction = predictPrice(type, category, parseInt(weeks_ahead));
+    
+    res.json({
+      success: true,
+      data: {
+        predicted_price: prediction.predicted_price,
+        confidence: prediction.confidence,
+        data_points: prediction.data_points,
+        type: type,
+        category: category,
+        weeks_ahead: weeks_ahead
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Prediction failed'
+    });
+  }
 });
 
 // Health check endpoint
