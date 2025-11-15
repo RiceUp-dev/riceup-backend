@@ -135,24 +135,30 @@ function getCurrentPrices() {
   };
 }
 
-// Get historical data
+// Get historical data with filtering - UPDATED VERSION
 function getHistoricalData(filters = {}) {
   let filteredData = riceData.filter(item => item.price > 0);
   
+  // Filter by type
   if (filters.type && filters.type !== 'all') {
     filteredData = filteredData.filter(item => item.type === filters.type);
   }
   
+  // Filter by category
   if (filters.category && filters.category !== 'all') {
     filteredData = filteredData.filter(item => item.category === filters.category);
   }
   
+  // Sort by date (newest first)
   filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
   
-  if (filters.limit) {
-    filteredData = filteredData.slice(0, parseInt(filters.limit));
+  // Increase default limit to 200 and allow larger requests
+  const limit = filters.limit ? parseInt(filters.limit) : 200;
+  if (limit > 0) {
+    filteredData = filteredData.slice(0, limit);
   }
   
+  console.log(`📊 Returning ${filteredData.length} historical records`);
   return filteredData;
 }
 
