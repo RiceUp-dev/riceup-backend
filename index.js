@@ -136,6 +136,7 @@ function getCurrentPrices() {
 }
 
 // Get historical data with filtering - UPDATED VERSION
+// Get historical data with filtering - SHOW ALL DATA
 function getHistoricalData(filters = {}) {
   let filteredData = riceData.filter(item => item.price > 0);
   
@@ -152,13 +153,8 @@ function getHistoricalData(filters = {}) {
   // Sort by date (newest first)
   filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
   
-  // Increase default limit to 200 and allow larger requests
-  const limit = filters.limit ? parseInt(filters.limit) : 200;
-  if (limit > 0) {
-    filteredData = filteredData.slice(0, limit);
-  }
-  
-  console.log(`📊 Returning ${filteredData.length} historical records`);
+  // Remove limit - return ALL data
+  console.log(`📊 Returning ALL ${filteredData.length} historical records`);
   return filteredData;
 }
 
