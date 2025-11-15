@@ -135,86 +135,24 @@ function getCurrentPrices() {
   };
 }
 
-// Get paginated historical data
-function getPaginatedHistoricalData(filters = {}, page = 1, pageSize = 500) {
-  let filteredData = riceData.filter(item => item.price > 0);
-  
-  // Apply filters
-  if (filters.type && filters.type !== 'all') {
-    filteredData = filteredData.filter(item => item.type === filters.type);
-  }
-  
-  if (filters.category && filters.category !== 'all') {
-    filteredData = filteredData.filter(item => item.category === filters.category);
-  }
-  
-  // Sort by date (newest first)
-  filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
-  
-  const totalRecords = filteredData.length;
-  const totalPages = Math.ceil(totalRecords / pageSize);
-  const startIndex = (page - 1) * pageSize;
-  const endIndex = Math.min(startIndex + pageSize, totalRecords);
-  const paginatedData = filteredData.slice(startIndex, endIndex);
-  
-  console.log(`📊 Paginated data: page ${page}, ${paginatedData.length} records out of ${totalRecords}`);
-  
-  return {
-    data: paginatedData,
-    pagination: {
-      current_page: page,
-      total_pages: totalPages,
-      total_records: totalRecords,
-      page_size: pageSize,
-      has_next: page < totalPages,
-      has_prev: page > 1
-    }
-  };
-}
-
-// Get quick stats for initial display
-function getQuickStats(filters = {}) {
-  let filteredData = riceData.filter(item => item.price > 0);
-  
-  // Apply filters
-  if (filters.type && filters.type !== 'all') {
-    filteredData = filteredData.filter(item => item.type === filters.type);
-  }
-  
-  if (filters.category && filters.category !== 'all') {
-    filteredData = filteredData.filter(item => item.category === filters.category);
-  }
-  
-  // Sort by date (newest first) and take first 100
-  filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
-  const quickData = filteredData.slice(0, 100);
-  
-  return {
-    historical_data: quickData,
-    total_records: filteredData.length,
-    loaded_records: quickData.length,
-    has_more: filteredData.length > 100
-  };
-}
-
-// Get historical data with filtering
+// Get historical data
 function getHistoricalData(filters = {}) {
   let filteredData = riceData.filter(item => item.price > 0);
   
-  // Filter by type
   if (filters.type && filters.type !== 'all') {
     filteredData = filteredData.filter(item => item.type === filters.type);
   }
   
-  // Filter by category
   if (filters.category && filters.category !== 'all') {
     filteredData = filteredData.filter(item => item.category === filters.category);
   }
   
-  // Sort by date (newest first)
   filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
   
-  console.log(`📊 Returning ${filteredData.length} historical records`);
+  if (filters.limit) {
+    filteredData = filteredData.slice(0, parseInt(filters.limit));
+  }
+  
   return filteredData;
 }
 
@@ -262,28 +200,6 @@ app.get('/api/prices/current', (req, res) => {
   res.json({ success: true, data: getCurrentPrices() });
 });
 
-// Quick stats for initial display
-app.get('/api/prices/historical/quick-stats', (req, res) => {
-  const { type, category } = req.query;
-  const quickStats = getQuickStats({ type, category });
-  res.json({
-    success: true,
-    data: quickStats
-  });
-});
-
-// Paginated historical data
-app.get('/api/prices/historical/paginated', (req, res) => {
-  const { type, category, page = 1, page_size = 500 } = req.query;
-  const result = getPaginatedHistoricalData({ type, category }, parseInt(page), parseInt(page_size));
-  res.json({
-    success: true,
-    data: result.data,
-    pagination: result.pagination
-  });
-});
-
-// Full historical data (for backward compatibility)
 app.get('/api/prices/historical', (req, res) => {
   const { type, category, limit } = req.query;
   const historicalData = getHistoricalData({ type, category, limit });
